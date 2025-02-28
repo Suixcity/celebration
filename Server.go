@@ -1,0 +1,73 @@
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"log"
+	"net/http"
+	"github.com/gorilla/websocket"
+)
+
+var clients = make(map[*websocket.Conn]bool) // Connected clients
+var upgrader = websocket.Upgrader{
+	CheckOrigin: func(r *http.Request) bool {
+		return true
+	},
+}
+
+func handleWebhook(w http.ResponseWriter, r *http.Request) {
+	var data map[string]interface{}
+	if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	if event, ok := data["event"].(string); ok && event == "closed_won" {
+		fmt.Println("🎉 Deal Closed - Sending LED Trigger!")
+		broadcastMessage("celebrate")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"status":"success","message":"LED triggered"}`))
+		return
+	}
+
+	http.Error(w, "Invalid event", http.StatusBadRequest)
+}
+
+func handleWebSocket(w http.ResponseWriter, r *http.Request) {
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Println("WebSocket Upgrade Error:", err)
+		return
+	}
+	defer conn.Close()
+
+	clients[conn] = true
+
+	for {
+		_, _, err := conn.ReadMessage()
+		if err != nil {
+			log.Println("WebSocket Connection Closed")
+			delete(clients, conn)
+			break
+		}
+	}
+}
+
+func broadcastMessage(message string) {
+	for client := range clients {
+		if err := client.WriteMessage(websocket.TextMessage, []byte(message)); err != nil {
+			log.Println("Error sending message to client:", err)
+			client.Close()
+			delete(clients, client)
+		}
+	}
+}
+
+func main() {
+	http.HandleFunc("/", handleWebhook)
+	http.HandleFunc("/ws", handleWebSocket)
+
+	port := "10000" // Matches Render setup
+	fmt.Println("Server listening on port", port)
+	log.Fatal(http.ListenAndServe("0.0.0.0:"+port, nil))
+}
