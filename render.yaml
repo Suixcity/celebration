@@ -1,9 +1,8 @@
 services:
   - name: webhook-listener
     env: go
-    rootDir: Server
-    buildCommand: "go build -o server Server.go"
-    startCommand: "./server"
+    buildCommand: "cd Server && go build -o server Server.go"
+    startCommand: "cd Server && ./server"
     plan: free
     envVars:
       - key: PORT
