@@ -1,14 +1,14 @@
 package main
 
 import (
-	"fmt"
 	"log"
-	"time"
-	"github.com/gorilla/websocket"
 	"os/exec"
+	"time"
+
+	"github.com/gorilla/websocket"
 )
 
-var serverURL = "https://celebration-je6z.onrender.com"
+var serverURL = "wss://webhook-listener-2i7r.onrender.com/ws" // Updated for WebSocket connection
 
 func connectToWebSocket() {
 	for {
@@ -31,10 +31,22 @@ func handleMessages(c *websocket.Conn) {
 			log.Println("WebSocket connection lost, reconnecting...")
 			break
 		}
+
 		if string(message) == "celebrate" {
 			log.Println("🎉 Celebration Triggered!")
-			exec.Command("python3", "led_control.py").Run() // Call Python script for LED animation
+			triggerLED() // Call Go-based LED control function
 		}
+	}
+}
+
+func triggerLED() {
+	log.Println("Running LED Go script...")
+
+	// Execute led_control.go
+	cmd := exec.Command("go", "run", "Client/led_control.go")
+	err := cmd.Run()
+	if err != nil {
+		log.Println("Error executing LED Go script:", err)
 	}
 }
 
