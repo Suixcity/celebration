@@ -1,7 +1,7 @@
 services:
   - name: webhook-listener
     env: go
-    rootDir: server
+    rootDir: Server
     buildCommand: "go build -o server Server.go"
     startCommand: "./server"
     plan: free
