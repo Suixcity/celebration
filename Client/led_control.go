@@ -3,15 +3,16 @@ package main
 import (
 	"fmt"
 	"log"
+	"os"
 	"time"
 
 	ws2811 "github.com/rpi-ws281x/rpi-ws281x-go"
 )
 
 const (
-	ledPin     = 18  // GPIO Pin (matches your Python setup)
-	ledCount   = 300 // Number of LEDs in your strip
-	brightness = 50  // Adjust brightness (0-255)
+	ledPin     = 18
+	ledCount   = 300
+	brightness = 50
 	colorRed   = 0xFF0000
 	colorGreen = 0x00FF00
 	colorBlue  = 0x0000FF
@@ -19,6 +20,10 @@ const (
 )
 
 func main() {
+	if os.Geteuid() != 0 {
+		log.Fatal("This program must be run as root. Try: sudo go run led_control.go")
+	}
+
 	opt := ws2811.DefaultOptions
 	opt.Channels[0].GpioPin = ledPin
 	opt.Channels[0].Brightness = brightness
@@ -27,40 +32,33 @@ func main() {
 	if err := ws2811.Init(opt); err != nil {
 		log.Fatalf("Failed to initialize LEDs: %v", err)
 	}
-	defer ws2811.Fini()
+	defer func() {
+		fmt.Println("Cleaning up...")
+		ws2811.Fini()
+	}()
 
 	fmt.Println("🎉 Running Celebration LED Animation!")
 	celebrateAnimation()
 }
 
 func celebrateAnimation() {
-	for i := 0; i < ledCount; i++ {
-		ws2811.SetLed(i, colorRed)
-		ws2811.Render()
-		time.Sleep(10 * time.Millisecond)
-	}
-	time.Sleep(1 * time.Second)
+	colors := []int{colorRed, colorGreen, colorBlue}
 
-	for i := 0; i < ledCount; i++ {
-		ws2811.SetLed(i, colorGreen)
+	for _, color := range colors {
+		for i := 0; i < ledCount; i++ {
+			ws2811.Leds(0)[i] = color
+		}
 		ws2811.Render()
-		time.Sleep(10 * time.Millisecond)
-	}
-	time.Sleep(1 * time.Second)
-
-	for i := 0; i < ledCount; i++ {
-		ws2811.SetLed(i, colorBlue)
-		ws2811.Render()
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(1 * time.Second)
 	}
 
-	time.Sleep(1 * time.Second)
 	clearLEDs()
 }
 
 func clearLEDs() {
 	for i := 0; i < ledCount; i++ {
-		ws2811.SetLed(i, colorOff)
+		ws2811.Leds(0)[i] = colorOff
 	}
 	ws2811.Render()
+	time.Sleep(50 * time.Millisecond)
 }
