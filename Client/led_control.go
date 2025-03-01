@@ -19,7 +19,7 @@ const (
 	colorOff   = 0x000000
 )
 
-func main() {
+func BlinkLEDs() {
 	if os.Geteuid() != 0 {
 		log.Fatal("This program must be run as root. Try: sudo go run led_control.go")
 	}
