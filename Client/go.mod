@@ -1,4 +1,4 @@
-module server
+module celebration
 
 go 1.24.0
 
