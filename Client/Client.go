@@ -43,7 +43,7 @@ func triggerLED() {
 	log.Println("Running LED Go script...")
 
 	// Execute led_control.go
-	cmd := exec.Command("go", "run", "Client/led_control.go")
+	cmd := exec.Command("go", "run", "celebration\Client\led_control.go")
 	err := cmd.Run()
 	if err != nil {
 		log.Println("Error executing LED Go script:", err)

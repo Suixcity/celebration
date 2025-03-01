@@ -9,13 +9,13 @@ import (
 )
 
 const (
-	ledPin      = 18   // GPIO Pin (matches your Python setup)
-	ledCount    = 300  // Number of LEDs in your strip
-	brightness  = 50   // Adjust brightness (0-255)
-	colorRed    = 0xFF0000
-	colorGreen  = 0x00FF00
-	colorBlue   = 0x0000FF
-	colorOff    = 0x000000
+	ledPin     = 18  // GPIO Pin (matches your Python setup)
+	ledCount   = 300 // Number of LEDs in your strip
+	brightness = 50  // Adjust brightness (0-255)
+	colorRed   = 0xFF0000
+	colorGreen = 0x00FF00
+	colorBlue  = 0x0000FF
+	colorOff   = 0x000000
 )
 
 func main() {
