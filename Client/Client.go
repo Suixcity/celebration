@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/suixcity/celebration/ledcontrol" // Update this import path to your own fork
+	"github.com/Suixcity/celebration/Client/ledcontrol"
 )
 
 var serverURL = "wss://webhook-listener-2i7r.onrender.com/ws" // Update this URL to your own server
