@@ -18,21 +18,30 @@ const (
 	colorOff   = 0x000000
 )
 
+var dev *ws2811.WS2811
+
 func InitLEDs() error {
 	opt := ws2811.DefaultOptions
 	opt.Channels[0].GpioPin = ledPin
 	opt.Channels[0].Brightness = brightness
 	opt.Channels[0].LedCount = ledCount
 
-	if err := ws2811.Init(opt); err != nil {
+	var err error
+	dev, err = ws2811.MakeWS2811(&opt)
+	if err != nil {
 		return fmt.Errorf("failed to initialize LEDs: %v", err)
+	}
+	if err := dev.Init(); err != nil {
+		return fmt.Errorf("failed to start LED control: %v", err)
 	}
 	return nil
 }
 
 func CleanupLEDs() {
 	fmt.Println("Cleaning up...")
-	ws2811.Fini()
+	if dev != nil {
+		dev.Fini()
+	}
 }
 
 func BlinkLEDs() {
@@ -41,7 +50,7 @@ func BlinkLEDs() {
 	}
 	defer CleanupLEDs()
 
-	fmt.Println("🎉 Running Celebration LED Animation!")
+	fmt.Println("Running Celebration LED Animation!")
 	celebrateAnimation()
 }
 
@@ -50,9 +59,9 @@ func celebrateAnimation() {
 
 	for _, color := range colors {
 		for i := 0; i < ledCount; i++ {
-			ws2811.Leds(0)[i] = color
+			dev.Leds(0)[i] = uint32(color)
 		}
-		ws2811.Render()
+		dev.Render()
 		time.Sleep(1 * time.Second)
 	}
 
@@ -61,8 +70,9 @@ func celebrateAnimation() {
 
 func clearLEDs() {
 	for i := 0; i < ledCount; i++ {
-		ws2811.Leds(0)[i] = colorOff
+		dev.Leds(0)[i] = colorOff
 	}
-	ws2811.Render()
+	dev.Render()
 	time.Sleep(50 * time.Millisecond)
 }
+
