@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/Suixcity/celebration/Client/ledcontrol"
+	"celebration/ledcontrol" // Change this to match your actual project folder
 )
 
 var serverURL = "wss://webhook-listener-2i7r.onrender.com/ws" // Update this URL to your own server
@@ -33,7 +33,7 @@ func handleMessages(c *websocket.Conn) {
 		}
 
 		if string(message) == "celebrate" {
-			log.Println("🎉 Celebration Triggered!")
+			log.Println(" Celebration Triggered!")
 			ledcontrol.BlinkLEDs()
 		}
 	}
@@ -43,3 +43,4 @@ func main() {
 	log.Println("Starting WebSocket Client...")
 	connectToWebSocket()
 }
+
