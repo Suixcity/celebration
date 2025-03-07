@@ -99,10 +99,10 @@ func celebrateAnimation() {
 		time.Sleep(1 * time.Second)
 	}
 
-	clearLEDs()
+	ClearLEDs()
 }
 
-func clearLEDs() {
+func ClearLEDs() {
 	for i := 0; i < ledCount; i++ {
 		dev.Leds(0)[i] = colorOff
 	}
