@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+
 	"github.com/gorilla/websocket"
 )
 
@@ -22,8 +23,10 @@ func handleWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	log.Printf("Received Webhook: %v\n", data) // Debugging
+
 	if event, ok := data["event"].(string); ok && event == "closed_won" {
-		fmt.Println("🎉 Deal Closed - Sending LED Trigger!")
+		log.Println("🎉 Deal Closed - Sending LED Trigger!")
 		broadcastMessage("celebrate")
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`{"status":"success","message":"LED triggered"}`))
@@ -39,15 +42,20 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		log.Println("WebSocket Upgrade Error:", err)
 		return
 	}
-	defer conn.Close()
 
 	clients[conn] = true
+	log.Println("Client connected")
+
+	defer func() {
+		log.Println("Client disconnected")
+		delete(clients, conn) // Cleanup
+		conn.Close()
+	}()
 
 	for {
 		_, _, err := conn.ReadMessage()
 		if err != nil {
 			log.Println("WebSocket Connection Closed")
-			delete(clients, conn)
 			break
 		}
 	}
