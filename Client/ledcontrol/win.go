@@ -98,10 +98,15 @@ func celebrateAnimation() {
 	ledMutex.Lock()
 	defer ledMutex.Unlock()
 
+	if dev == nil {
+		log.Println("celebrateAnimation: dev is nil")
+		return
+	}
+
 	colors := []int{colorRed, colorGreen, colorBlue}
 	leds := dev.Leds(0)
 
-	if len(leds) == 0 {
+	if leds == nil || len(leds) == 0 {
 		log.Println("celebrateAnimation: no LEDs found on channel 0")
 		return
 	}
@@ -127,8 +132,8 @@ func ClearLEDs() {
 	}
 
 	leds := dev.Leds(0)
-	if len(leds) == 0 {
-		log.Println("ClearLEDs: no LEDs found on channel 0")
+	if leds == nil || len(leds) == 0 {
+		log.Printf("ClearLEDs: no LEDs found on channel 0 (leds=%v, len=%d)", leds, len(leds))
 		return
 	}
 
@@ -159,6 +164,15 @@ func RunBreathingEffect() {
 				ClearLEDs()
 				return
 			case <-ticker.C:
+				if dev == nil {
+					continue
+				}
+
+				leds := dev.Leds(0)
+				if leds == nil || len(leds) == 0 {
+					continue
+				}
+
 				t += 0.05
 				brightness := (math.Sin(t) + 1.0) / 2.0
 				brightness = math.Pow(brightness, 2.2)
@@ -168,11 +182,6 @@ func RunBreathingEffect() {
 				b := uint8(255 * brightness)
 
 				color := uint32(r)<<16 | uint32(g)<<8 | uint32(b)
-
-				leds := dev.Leds(0)
-				if len(leds) == 0 {
-					continue
-				}
 
 				for i := 0; i < config.LedCount && i < len(leds); i++ {
 					leds[i] = color
