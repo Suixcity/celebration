@@ -117,6 +117,18 @@ func celebrateAnimation() {
 func ClearLEDs() {
 	ledMutex.Lock()
 	defer ledMutex.Unlock()
+
+	if dev == nil {
+		log.Println("ClearLEDs: dev is nil")
+		return
+	}
+
+	leds := dev.Leds(0)
+	if leds == nil {
+		log.Println("ClearLEDs: no LEDs availablefound on channel 0")
+		return
+	}
+
 	for i := 0; i < ledCount; i++ {
 		dev.Leds(0)[i] = colorOff
 	}
