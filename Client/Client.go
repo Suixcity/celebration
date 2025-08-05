@@ -7,8 +7,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/gorilla/websocket"
 	"celebration/ledcontrol"
+
+	"github.com/gorilla/websocket"
 )
 
 var serverURL = "wss://webhook-listener-2i7r.onrender.com/ws"
@@ -73,6 +74,8 @@ func handleShutdown() {
 
 func main() {
 	log.Println("Starting WebSocket Client...")
+
+	ledcontrol.RunBreathingEffect()
 
 	// Run WebSocket connection in a separate goroutine
 	go connectToWebSocket()
