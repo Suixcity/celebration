@@ -6,6 +6,7 @@ import (
 	"log"
 	"math"
 	"os"
+	"sync"
 	"time"
 
 	ws2811 "github.com/rpi-ws281x/rpi-ws281x-go"
@@ -29,6 +30,8 @@ type Config struct {
 
 var dev *ws2811.WS2811
 var config Config
+var ledController *ws2811.WS2811
+var ledMutex sync.Mutex
 
 // LoadConfig reads config.json and populates the Config struct
 func LoadConfig() error {
@@ -71,6 +74,8 @@ func InitLEDs() error {
 }
 
 func CleanupLEDs() {
+	ledMutex.Lock()
+	defer ledMutex.Unlock()
 	fmt.Println("Cleaning up...")
 	if dev != nil {
 		dev.Fini()
@@ -94,6 +99,8 @@ func BlinkLEDs() {
 }
 
 func celebrateAnimation() {
+	ledMutex.Lock()
+	defer ledMutex.Unlock()
 	colors := []int{colorRed, colorGreen, colorBlue}
 
 	for _, color := range colors {
@@ -108,6 +115,8 @@ func celebrateAnimation() {
 }
 
 func ClearLEDs() {
+	ledMutex.Lock()
+	defer ledMutex.Unlock()
 	for i := 0; i < ledCount; i++ {
 		dev.Leds(0)[i] = colorOff
 	}

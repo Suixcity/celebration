@@ -75,6 +75,11 @@ func handleShutdown() {
 func main() {
 	log.Println("Starting WebSocket Client...")
 
+	err := ledcontrol.InitLEDs()
+	if err != nil {
+		log.Fatalf("Failed to initialize LEDs: %v", err)
+	}
+
 	ledcontrol.RunBreathingEffect()
 
 	// Run WebSocket connection in a separate goroutine
