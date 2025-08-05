@@ -31,6 +31,7 @@ type Config struct {
 var dev *ws2811.WS2811
 var config Config
 var ledMutex sync.Mutex
+var breathingStopChan chan bool
 
 func LoadConfig() error {
 	file, err := os.Open("config.json")
@@ -61,20 +62,25 @@ func InitLEDs() error {
 	var err error
 	dev, err = ws2811.MakeWS2811(&opt)
 	if err != nil {
-		return fmt.Errorf("failed to initialize LEDs: %v", err)
+		log.Printf("InitLEDs: MakeWS2811 failed: %v", err)
+		return err
 	}
 	if err := dev.Init(); err != nil {
-		return fmt.Errorf("failed to start LED control: %v", err)
+		log.Printf("InitLEDs: dev.Init() failed: %v", err)
+		return err
 	}
+
+	log.Printf("InitLEDs: Successfully initialized %d LEDs on GPIO %d", config.LedCount, config.LedPin)
 	return nil
 }
 
 func CleanupLEDs() {
 	ledMutex.Lock()
 	defer ledMutex.Unlock()
-	fmt.Println("Cleaning up...")
+	log.Println("Cleaning up...")
 	if dev != nil {
 		dev.Fini()
+		dev = nil
 	}
 }
 
@@ -83,14 +89,19 @@ func BlinkLEDs() {
 		StopBreathingEffect()
 
 		if err := InitLEDs(); err != nil {
-			log.Fatalf("Error initializing LEDs: %v", err)
+			log.Fatalf("BlinkLEDs: Error initializing LEDs: %v", err)
+			return
 		}
 		defer CleanupLEDs()
 
-		fmt.Println("Running Celebration LED Animation!")
+		log.Println("Running Celebration LED Animation!")
 		celebrateAnimation()
 
-		RunBreathingEffect()
+		if dev != nil && config.LedCount > 0 {
+			RunBreathingEffect()
+		} else {
+			log.Println("BlinkLEDs: skipping RunBreathingEffect due to uninitialized dev or LED count")
+		}
 	}()
 }
 
@@ -103,13 +114,13 @@ func celebrateAnimation() {
 		return
 	}
 
-	colors := []int{colorRed, colorGreen, colorBlue}
-	leds := dev.Leds(0)
-
+	leds := safeGetLEDs(0)
 	if leds == nil || len(leds) == 0 {
 		log.Println("celebrateAnimation: no LEDs found on channel 0")
 		return
 	}
+
+	colors := []int{colorRed, colorGreen, colorBlue}
 
 	for _, color := range colors {
 		for i := 0; i < config.LedCount && i < len(leds); i++ {
@@ -131,7 +142,7 @@ func ClearLEDs() {
 		return
 	}
 
-	leds := dev.Leds(0)
+	leds := safeGetLEDs(0)
 	if leds == nil || len(leds) == 0 {
 		log.Printf("ClearLEDs: no LEDs found on channel 0 (leds=%v, len=%d)", leds, len(leds))
 		return
@@ -143,8 +154,6 @@ func ClearLEDs() {
 	dev.Render()
 	time.Sleep(50 * time.Millisecond)
 }
-
-var breathingStopChan chan bool
 
 func RunBreathingEffect() {
 	if breathingStopChan != nil {
@@ -164,11 +173,7 @@ func RunBreathingEffect() {
 				ClearLEDs()
 				return
 			case <-ticker.C:
-				if dev == nil {
-					continue
-				}
-
-				leds := dev.Leds(0)
+				leds := safeGetLEDs(0)
 				if leds == nil || len(leds) == 0 {
 					continue
 				}
@@ -197,4 +202,16 @@ func StopBreathingEffect() {
 		close(breathingStopChan)
 		breathingStopChan = nil
 	}
+}
+
+func safeGetLEDs(channel int) []uint32 {
+	if dev == nil {
+		return nil
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("safeGetLEDs: recovered from panic: %v", r)
+		}
+	}()
+	return dev.Leds(channel)
 }
