@@ -30,15 +30,13 @@ type Config struct {
 
 var dev *ws2811.WS2811
 var config Config
-var ledController *ws2811.WS2811
 var ledMutex sync.Mutex
 
-// LoadConfig reads config.json and populates the Config struct
 func LoadConfig() error {
 	file, err := os.Open("config.json")
 	if err != nil {
 		log.Println("Config file not found, using defaults...")
-		config = Config{LedPin: 18, LedCount: 300, Brightness: 50} // Default values
+		config = Config{LedPin: 18, LedCount: 300, Brightness: 50}
 		return nil
 	}
 	defer file.Close()
@@ -47,12 +45,10 @@ func LoadConfig() error {
 	if err := decoder.Decode(&config); err != nil {
 		return fmt.Errorf("failed to parse config file: %v", err)
 	}
-
 	return nil
 }
 
 func InitLEDs() error {
-	// Load config first
 	if err := LoadConfig(); err != nil {
 		return err
 	}
@@ -84,7 +80,7 @@ func CleanupLEDs() {
 
 func BlinkLEDs() {
 	go func() {
-		StopBreathingEffect() // interrupt background animation
+		StopBreathingEffect()
 
 		if err := InitLEDs(); err != nil {
 			log.Fatalf("Error initializing LEDs: %v", err)
@@ -94,18 +90,25 @@ func BlinkLEDs() {
 		fmt.Println("Running Celebration LED Animation!")
 		celebrateAnimation()
 
-		RunBreathingEffect() // resume breathing after celebration
+		RunBreathingEffect()
 	}()
 }
 
 func celebrateAnimation() {
 	ledMutex.Lock()
 	defer ledMutex.Unlock()
+
 	colors := []int{colorRed, colorGreen, colorBlue}
+	leds := dev.Leds(0)
+
+	if len(leds) == 0 {
+		log.Println("celebrateAnimation: no LEDs found on channel 0")
+		return
+	}
 
 	for _, color := range colors {
-		for i := 0; i < ledCount; i++ {
-			dev.Leds(0)[i] = uint32(color)
+		for i := 0; i < config.LedCount && i < len(leds); i++ {
+			leds[i] = uint32(color)
 		}
 		dev.Render()
 		time.Sleep(1 * time.Second)
@@ -124,13 +127,13 @@ func ClearLEDs() {
 	}
 
 	leds := dev.Leds(0)
-	if leds == nil {
-		log.Println("ClearLEDs: no LEDs availablefound on channel 0")
+	if len(leds) == 0 {
+		log.Println("ClearLEDs: no LEDs found on channel 0")
 		return
 	}
 
-	for i := 0; i < ledCount; i++ {
-		dev.Leds(0)[i] = colorOff
+	for i := 0; i < config.LedCount && i < len(leds); i++ {
+		leds[i] = colorOff
 	}
 	dev.Render()
 	time.Sleep(50 * time.Millisecond)
@@ -140,7 +143,7 @@ var breathingStopChan chan bool
 
 func RunBreathingEffect() {
 	if breathingStopChan != nil {
-		close(breathingStopChan) // kill any existing animation
+		close(breathingStopChan)
 	}
 	breathingStopChan = make(chan bool)
 
@@ -158,15 +161,21 @@ func RunBreathingEffect() {
 			case <-ticker.C:
 				t += 0.05
 				brightness := (math.Sin(t) + 1.0) / 2.0
-				brightness = math.Pow(brightness, 2.2) // gamma correction
+				brightness = math.Pow(brightness, 2.2)
 
 				r := uint8(0 * brightness)
 				g := uint8(0 * brightness)
-				b := uint8(255 * brightness) // Blue breathing
+				b := uint8(255 * brightness)
 
 				color := uint32(r)<<16 | uint32(g)<<8 | uint32(b)
-				for i := 0; i < config.LedCount; i++ {
-					dev.Leds(0)[i] = color
+
+				leds := dev.Leds(0)
+				if len(leds) == 0 {
+					continue
+				}
+
+				for i := 0; i < config.LedCount && i < len(leds); i++ {
+					leds[i] = color
 				}
 				dev.Render()
 			}
