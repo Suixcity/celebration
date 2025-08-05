@@ -1,4 +1,4 @@
-const socket = new WebSocket("ws://" + window.location.host + "/ws");
+const socket = new WebSocket("https://webhook-listener-2i7r.onrender.com");
 
 socket.onopen = function() {
     console.log("Connected to WebSocket");

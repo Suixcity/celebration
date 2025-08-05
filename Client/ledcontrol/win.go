@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"time"
 
@@ -78,6 +79,8 @@ func CleanupLEDs() {
 
 func BlinkLEDs() {
 	go func() {
+		StopBreathingEffect() // interrupt background animation
+
 		if err := InitLEDs(); err != nil {
 			log.Fatalf("Error initializing LEDs: %v", err)
 		}
@@ -85,6 +88,8 @@ func BlinkLEDs() {
 
 		fmt.Println("Running Celebration LED Animation!")
 		celebrateAnimation()
+
+		RunBreathingEffect() // resume breathing after celebration
 	}()
 }
 
@@ -108,4 +113,49 @@ func ClearLEDs() {
 	}
 	dev.Render()
 	time.Sleep(50 * time.Millisecond)
+}
+
+var breathingStopChan chan bool
+
+func RunBreathingEffect() {
+	if breathingStopChan != nil {
+		close(breathingStopChan) // kill any existing animation
+	}
+	breathingStopChan = make(chan bool)
+
+	go func() {
+		ticker := time.NewTicker(20 * time.Millisecond)
+		defer ticker.Stop()
+
+		var t float64
+
+		for {
+			select {
+			case <-breathingStopChan:
+				ClearLEDs()
+				return
+			case <-ticker.C:
+				t += 0.05
+				brightness := (math.Sin(t) + 1.0) / 2.0
+				brightness = math.Pow(brightness, 2.2) // gamma correction
+
+				r := uint8(0 * brightness)
+				g := uint8(0 * brightness)
+				b := uint8(255 * brightness) // Blue breathing
+
+				color := uint32(r)<<16 | uint32(g)<<8 | uint32(b)
+				for i := 0; i < config.LedCount; i++ {
+					dev.Leds(0)[i] = color
+				}
+				dev.Render()
+			}
+		}
+	}()
+}
+
+func StopBreathingEffect() {
+	if breathingStopChan != nil {
+		close(breathingStopChan)
+		breathingStopChan = nil
+	}
 }

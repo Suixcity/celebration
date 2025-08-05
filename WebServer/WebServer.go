@@ -53,7 +53,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 }
 
 func serveWebApp() {
-	fs := http.FileServer(http.Dir("./WebServer/web"))
+	fs := http.FileServer(http.Dir("./web"))
 	http.Handle("/", fs)
 	http.HandleFunc("/ws", handleWebSocket)
 
