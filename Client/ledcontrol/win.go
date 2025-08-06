@@ -117,7 +117,10 @@ func RunBreathingEffect() {
 					leds := dev.Leds(0)
 					if len(leds) > 0 {
 						t += 0.0021
-						bright := math.Pow((math.Sin(t)+1.0)/2.0, 2.2)
+						raw := (math.Sin(t) + 1.0) / 2.0
+						scaled := math.Pow(raw, 2.0)
+						min := 0.05
+						bright := scaled*(1.0-min) + min
 						for i := 0; i < config.LedCount && i < len(leds); i++ {
 							leds[i] = uint32(255 * bright)
 						}
