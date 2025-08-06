@@ -139,32 +139,41 @@ func StopBreathingEffect() {
 	}
 }
 
-func celebrateAnimation() {
-	ledMutex.Lock()
-	defer ledMutex.Unlock()
-	if dev == nil {
-		return
-	}
-	leds := dev.Leds(0)
-	if leds == nil {
-		return
-	}
-	colors := []uint32{colorRed, colorGreen, colorBlue}
-	for _, c := range colors {
-		for i := 0; i < config.LedCount && i < len(leds); i++ {
-			leds[i] = c
+func celebrateAnimation(done chan struct{}) {
+	go func() {
+		colors := []uint32{colorRed, colorGreen, colorBlue}
+		for _, c := range colors {
+			ledMutex.Lock()
+			if dev == nil {
+				ledMutex.Unlock()
+				continue
+			}
+			leds := dev.Leds(0)
+			if leds == nil || len(leds) == 0 {
+				ledMutex.Unlock()
+				continue
+			}
+			for i := 0; i < config.LedCount && i < len(leds); i++ {
+				leds[i] = c
+			}
+			dev.Render()
+			ledMutex.Unlock()
+			time.Sleep(time.Second)
 		}
-		dev.Render()
-		time.Sleep(time.Second)
-	}
-	ClearLEDs()
+		ClearLEDs()
+		close(done) // signal animation complete
+	}()
 }
 
 func BlinkLEDs() {
 	log.Println("🎉 Celebration Triggered!")
 	StopBreathingEffect()
 
-	celebrateAnimation()
+	done := make(chan struct{})
+	celebrateAnimation(done)
 
-	RunBreathingEffect()
+	go func() {
+		<-done
+		RunBreathingEffect()
+	}()
 }
