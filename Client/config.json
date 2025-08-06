@@ -1,5 +1,5 @@
 {
     "ledPin": 18,
     "ledCount": 300,
-    "brightness": 75
+    "brightness": 255
 }
