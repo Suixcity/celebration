@@ -30,6 +30,7 @@ var (
 	config            Config
 	ledMutex          sync.Mutex
 	breathingStopChan chan struct{}
+	breathingWg       sync.WaitGroup
 )
 
 func LoadConfig() error {
@@ -73,15 +74,18 @@ func InitLEDs() error {
 func ClearLEDs() {
 	ledMutex.Lock()
 	defer ledMutex.Unlock()
+
 	if dev == nil {
 		log.Println("ClearLEDs: dev is nil")
 		return
 	}
+
 	leds := dev.Leds(0)
 	if leds == nil || len(leds) == 0 {
-		log.Println("ClearLEDs: LEDs slice is nil or empty")
+		log.Println("ClearLEDs: LED array is nil or empty")
 		return
 	}
+
 	for i := range leds {
 		leds[i] = colorOff
 	}
@@ -89,13 +93,14 @@ func ClearLEDs() {
 }
 
 func RunBreathingEffect() {
-	// Stop any running breathing first
 	StopBreathingEffect()
 
 	breathingStopChan = make(chan struct{})
 	log.Println("RunBreathingEffect: starting")
 
+	breathingWg.Add(1) // tracking
 	go func() {
+		defer breathingWg.Done() // done when exiting
 		ticker := time.NewTicker(20 * time.Millisecond)
 		defer ticker.Stop()
 
@@ -107,18 +112,17 @@ func RunBreathingEffect() {
 				ClearLEDs()
 				return
 			case <-ticker.C:
-				if dev == nil {
-					continue
-				}
 				ledMutex.Lock()
-				leds := dev.Leds(0)
-				if leds != nil {
-					t += 0.05
-					bright := math.Pow((math.Sin(t)+1.0)/2.0, 2.2)
-					for i := 0; i < config.LedCount && i < len(leds); i++ {
-						leds[i] = uint32(255 * bright)
+				if dev != nil {
+					leds := dev.Leds(0)
+					if leds != nil && len(leds) > 0 {
+						t += 0.05
+						bright := math.Pow((math.Sin(t)+1.0)/2.0, 2.2)
+						for i := 0; i < config.LedCount && i < len(leds); i++ {
+							leds[i] = uint32(255 * bright)
+						}
+						dev.Render()
 					}
-					dev.Render()
 				}
 				ledMutex.Unlock()
 			}
@@ -130,6 +134,7 @@ func StopBreathingEffect() {
 	if breathingStopChan != nil {
 		log.Println("StopBreathingEffect: signal stop")
 		close(breathingStopChan)
+		breathingWg.Wait() // block until finished
 		breathingStopChan = nil
 	}
 }
