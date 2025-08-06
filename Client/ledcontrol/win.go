@@ -101,7 +101,7 @@ func RunBreathingEffect() {
 	breathingWg.Add(1) // tracking
 	go func() {
 		defer breathingWg.Done() // done when exiting
-		ticker := time.NewTicker(20 * time.Millisecond)
+		ticker := time.NewTicker(10 * time.Millisecond)
 		defer ticker.Stop()
 
 		var t float64
@@ -116,7 +116,7 @@ func RunBreathingEffect() {
 				if dev != nil {
 					leds := dev.Leds(0)
 					if len(leds) > 0 {
-						t += 0.05
+						t += 0.0021
 						bright := math.Pow((math.Sin(t)+1.0)/2.0, 2.2)
 						for i := 0; i < config.LedCount && i < len(leds); i++ {
 							leds[i] = uint32(255 * bright)
