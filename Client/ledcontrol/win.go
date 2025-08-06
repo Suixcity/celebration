@@ -86,25 +86,22 @@ func CleanupLEDs() {
 }
 
 func BlinkLEDs() {
-	go func() {
-		StopBreathingEffect()
+	StopBreathingEffect()
 
-		if err := InitLEDs(); err != nil {
-			log.Fatalf("BlinkLEDs: Error initializing LEDs: %v", err)
-			return
-		}
-		defer CleanupLEDs()
+	if err := InitLEDs(); err != nil {
+		log.Fatalf("BlinkLEDs: Error initializing LEDs: %v", err)
+		return
+	}
 
-		log.Println("Running Celebration LED Animation!")
-		celebrateAnimation()
+	log.Println("Running Celebration LED Animation!")
+	celebrateAnimation()
 
-		if HasValidLEDChannel(0) {
-			log.Println("BlinkLEDs: starting RunBreathingEffect")
-			RunBreathingEffect()
-		} else {
-			log.Println("BlinkLEDs: skipping RunBreathingEffect due to invalid LED channel")
-		}
-	}()
+	if HasValidLEDChannel(0) {
+		log.Println("BlinkLEDs: starting RunBreathingEffect")
+		RunBreathingEffect()
+	} else {
+		log.Println("BlinkLEDs: skipping RunBreathingEffect due to invalid LED channel")
+	}
 }
 
 func celebrateAnimation() {
