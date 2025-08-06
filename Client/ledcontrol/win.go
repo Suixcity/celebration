@@ -105,7 +105,7 @@ func RunBreathingEffect() {
 		defer ticker.Stop()
 
 		var t float64
-		baseColor := colorGreen // customize: colorGreen, colorRed, etc.
+		baseColor := colorGreen // change to colorBlue etc.
 
 		for {
 			select {
@@ -119,31 +119,35 @@ func RunBreathingEffect() {
 				if dev != nil {
 					leds := dev.Leds(0)
 					if len(leds) > 0 {
-						// Advance time for sine wave
-						t += 0.00132 // 30s full wave cycle @ 100fps
+						t += 0.00132 // 30s wave @ 100fps
 
-						// Sine wave mapped to [0..1]
+						// Sine wave [0..1]
 						phase := (math.Sin(t) + 1.0) / 2.0
 
-						// Scale to stay within perceptual range [min..1]
+						// Scale to perceptual range [0.2 .. 1.0]
 						min := 0.2
-						rangeScale := 1.0 - min
-						brightness := phase*rangeScale + min
+						brightness := phase*(1.0-min) + min
 
-						// Extract base color components
-						r := float64((baseColor >> 16) & 0xFF)
-						g := float64((baseColor >> 8) & 0xFF)
-						b := float64(baseColor & 0xFF)
+						// Base RGB from color constant
+						baseR := float64((baseColor >> 16) & 0xFF)
+						baseG := float64((baseColor >> 8) & 0xFF)
+						baseB := float64(baseColor & 0xFF)
 
-						// Scale each channel by brightness
-						rr := uint32(r * brightness)
-						gg := uint32(g * brightness)
-						bb := uint32(b * brightness)
+						// Scale + clamp RGB values
+						scale := func(v float64) uint32 {
+							val := uint32(v * brightness)
+							if val < 50 {
+								val = 50 // clamp to minimum visible
+							}
+							return val
+						}
 
-						// Recombine color
+						rr := scale(baseR)
+						gg := scale(baseG)
+						bb := scale(baseB)
+
 						color := (rr << 16) | (gg << 8) | bb
 
-						// Apply to all LEDs
 						for i := 0; i < config.LedCount && i < len(leds); i++ {
 							leds[i] = color
 						}
