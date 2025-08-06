@@ -98,10 +98,10 @@ func RunBreathingEffect() {
 	breathingStopChan = make(chan struct{})
 	log.Println("RunBreathingEffect: starting")
 
-	breathingWg.Add(1) // tracking
+	breathingWg.Add(1)
 	go func() {
-		defer breathingWg.Done() // done when exiting
-		ticker := time.NewTicker(10 * time.Millisecond)
+		defer breathingWg.Done()
+		ticker := time.NewTicker(10 * time.Millisecond) // 100 FPS
 		defer ticker.Stop()
 
 		var t float64
@@ -111,31 +111,29 @@ func RunBreathingEffect() {
 				log.Println("RunBreathingEffect: stopping")
 				ClearLEDs()
 				return
+
 			case <-ticker.C:
 				ledMutex.Lock()
 				if dev != nil {
 					leds := dev.Leds(0)
 					if len(leds) > 0 {
-						t += 0.00132 // 30s cycle at 100 FPS
+						// Advance wave
+						t += 0.00132 // 30s cycle @ 100fps
 
-						// Raw sine wave scaled to [0, 1]
+						// Normalized sine: [0..1]
 						phase := (math.Sin(t) + 1.0) / 2.0
 
-						// Gamma correct to smooth curve
-						brightness := math.Pow(phase, 2.2)
+						// Scale to [min .. 1.0]
+						min := 0.25
+						rangeScale := 1.0 - min
+						brightness := phase*rangeScale + min
 
-						// Enforce visible minimum brightness (won’t render below ~15–20)
-						if brightness < 0.2 {
-							brightness = 0.2
-						}
-
-						// Calculate 8-bit brightness (0–255)
+						// Convert to 8-bit value
 						val := uint32(brightness * 255)
 
-						// COLOR: Green channel only (shift left by 8 bits)
-						color := val << 8 // 0x00GG00
+						// Set LED color (green channel only)
+						color := val // 0x00GG00
 
-						// Apply to all LEDs
 						for i := 0; i < config.LedCount && i < len(leds); i++ {
 							leds[i] = color
 						}
@@ -143,7 +141,6 @@ func RunBreathingEffect() {
 					}
 				}
 				ledMutex.Unlock()
-
 			}
 		}
 	}()
