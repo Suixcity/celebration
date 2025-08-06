@@ -105,7 +105,7 @@ func RunBreathingEffect() {
 		defer ticker.Stop()
 
 		var t float64
-		baseColor := colorGreen // change to colorBlue etc.
+		baseColor := colorBlue // change to colorBlue etc.
 
 		for {
 			select {
