@@ -60,10 +60,10 @@ func InitLEDs() error {
 	var err error
 	dev, err = ws2811.MakeWS2811(&opt)
 	if err != nil {
-		return fmt.Errorf("MakeWS2811 failed: %v", err)
+		return fmt.Errorf("makeWS2811 failed: %v", err)
 	}
 	if err := dev.Init(); err != nil {
-		return fmt.Errorf("Init failed: %v", err)
+		return fmt.Errorf("init failed: %v", err)
 	}
 
 	log.Printf("InitLEDs: %d LEDs on GPIO %d", config.LedCount, config.LedPin)
@@ -157,17 +157,13 @@ func celebrateAnimation() {
 
 func BlinkLEDs() {
 	log.Println("🎉 Celebration Triggered!")
-
-	// First, stop breathing to avoid race conditions
 	StopBreathingEffect()
 
-	ledMutex.Lock()
-	defer ledMutex.Unlock()
-
-	if err := InitLEDs(); err == nil {
-		celebrateAnimation()
-		RunBreathingEffect()
-	} else {
+	if err := InitLEDs(); err != nil {
 		log.Println("BlinkLEDs: InitLEDs failed:", err)
+		return
 	}
+
+	celebrateAnimation()
+	RunBreathingEffect()
 }
