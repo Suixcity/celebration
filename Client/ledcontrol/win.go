@@ -116,22 +116,34 @@ func RunBreathingEffect() {
 				if dev != nil {
 					leds := dev.Leds(0)
 					if len(leds) > 0 {
-						t += 0.00132
-						raw := math.Sin(t) + 1.0/2.0
-						bright := math.Pow(raw, 2.2)
-						min := .15
-						if bright < min {
-							bright = min
+						t += 0.00132 // 30s cycle at 100 FPS
+
+						// Raw sine wave scaled to [0, 1]
+						phase := (math.Sin(t) + 1.0) / 2.0
+
+						// Gamma correct to smooth curve
+						brightness := math.Pow(phase, 2.2)
+
+						// Enforce visible minimum brightness (won’t render below ~15–20)
+						if brightness < 0.2 {
+							brightness = 0.2
 						}
-						val := uint32(255 * bright)
-						//color := val << 8 green | val << 16 blue | val // RGB
+
+						// Calculate 8-bit brightness (0–255)
+						val := uint32(brightness * 255)
+
+						// COLOR: Green channel only (shift left by 8 bits)
+						color := val << 8 // 0x00GG00
+
+						// Apply to all LEDs
 						for i := 0; i < config.LedCount && i < len(leds); i++ {
-							leds[i] = val
+							leds[i] = color
 						}
 						dev.Render()
 					}
 				}
 				ledMutex.Unlock()
+
 			}
 		}
 	}()
