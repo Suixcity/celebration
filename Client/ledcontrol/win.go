@@ -124,11 +124,11 @@ func RunBreathingEffect() {
 						// Sine wave [0..1]
 						phase := (math.Sin(t) + 1.0) / 2.0
 
-						// Scale to perceptual range [0.2 .. 1.0]
+						// Scale to perceptual range
 						min := 0.2
 						brightness := phase*(1.0-min) + min
 
-						// Base RGB from color constant
+						// Extract base RGB
 						baseR := float64((baseColor >> 16) & 0xFF)
 						baseG := float64((baseColor >> 8) & 0xFF)
 						baseB := float64(baseColor & 0xFF)
@@ -136,9 +136,6 @@ func RunBreathingEffect() {
 						// Scale + clamp RGB values
 						scale := func(v float64) uint32 {
 							val := uint32(v * brightness)
-							if val < 50 {
-								val = 50 // clamp to minimum visible
-							}
 							return val
 						}
 
@@ -147,6 +144,12 @@ func RunBreathingEffect() {
 						bb := scale(baseB)
 
 						color := (rr << 16) | (gg << 8) | bb
+
+						// 🔍 LOG EVERYTHING
+						if int(t*1000)%3000 == 0 { // Log roughly every 3 seconds
+							log.Printf("t=%.2f phase=%.3f bright=%.3f RGB=(%d,%d,%d) color=0x%06X",
+								t, phase, brightness, rr, gg, bb, color)
+						}
 
 						for i := 0; i < config.LedCount && i < len(leds); i++ {
 							leds[i] = color
