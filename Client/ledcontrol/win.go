@@ -74,10 +74,12 @@ func ClearLEDs() {
 	ledMutex.Lock()
 	defer ledMutex.Unlock()
 	if dev == nil {
+		log.Println("ClearLEDs: dev is nil")
 		return
 	}
 	leds := dev.Leds(0)
-	if leds == nil {
+	if leds == nil || len(leds) == 0 {
+		log.Println("ClearLEDs: LEDs slice is nil or empty")
 		return
 	}
 	for i := range leds {
@@ -155,7 +157,12 @@ func celebrateAnimation() {
 
 func BlinkLEDs() {
 	log.Println("🎉 Celebration Triggered!")
-	RunBreathingEffect() // ensure breathing is not mid-cycle
+
+	// First, stop breathing to avoid race conditions
+	StopBreathingEffect()
+
+	ledMutex.Lock()
+	defer ledMutex.Unlock()
 
 	if err := InitLEDs(); err == nil {
 		celebrateAnimation()
