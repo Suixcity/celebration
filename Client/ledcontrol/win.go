@@ -114,7 +114,12 @@ func celebrateAnimation() {
 		return
 	}
 
-	leds := dev.Leds(0)
+	leds := safeLedsSnapshot(0)
+	if leds == nil || len(leds) == 0 {
+		log.Println("celebrateAnimation: no LEDs found on channel 0")
+		return
+	}
+
 	colors := []int{colorRed, colorGreen, colorBlue}
 
 	for _, color := range colors {
@@ -137,7 +142,12 @@ func ClearLEDs() {
 		return
 	}
 
-	leds := dev.Leds(0)
+	leds := safeLedsSnapshot(0)
+	if leds == nil || len(leds) == 0 {
+		log.Printf("ClearLEDs: no LEDs found on channel 0 (leds=%v, len=%d)", leds, len(leds))
+		return
+	}
+
 	for i := 0; i < config.LedCount && i < len(leds); i++ {
 		leds[i] = colorOff
 	}
@@ -163,11 +173,11 @@ func RunBreathingEffect() {
 				ClearLEDs()
 				return
 			case <-ticker.C:
-				if !HasValidLEDChannel(0) {
+				leds := safeLedsSnapshot(0)
+				if leds == nil || len(leds) == 0 {
 					continue
 				}
 
-				leds := dev.Leds(0)
 				t += 0.05
 				brightness := (math.Sin(t) + 1.0) / 2.0
 				brightness = math.Pow(brightness, 2.2)
@@ -195,14 +205,26 @@ func StopBreathingEffect() {
 }
 
 func HasValidLEDChannel(channel int) bool {
-	if dev == nil {
-		return false
-	}
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("HasValidLEDChannel: recovered from panic: %v", r)
 		}
 	}()
+	if dev == nil {
+		return false
+	}
 	leds := dev.Leds(channel)
 	return leds != nil && len(leds) > 0
+}
+
+func safeLedsSnapshot(channel int) []uint32 {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("safeLedsSnapshot: recovered from panic: %v", r)
+		}
+	}()
+	if dev == nil {
+		return nil
+	}
+	return dev.Leds(channel)
 }
