@@ -88,16 +88,13 @@ func CleanupLEDs() {
 func BlinkLEDs() {
 	StopBreathingEffect()
 
-	if !HasValidLEDChannel(0) {
-		log.Println("BlinkLEDs: invalid LED channel, skipping celebration")
-		return
-	}
-
 	log.Println("Running Celebration LED Animation!")
-	celebrateAnimation()
+	go func() {
+		celebrateAnimation()
 
-	log.Println("BlinkLEDs: restarting breathing effect")
-	RunBreathingEffect()
+		log.Println("BlinkLEDs: restarting breathing effect after animation")
+		RunBreathingEffect()
+	}()
 }
 
 func celebrateAnimation() {
