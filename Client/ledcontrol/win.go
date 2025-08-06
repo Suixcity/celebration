@@ -155,7 +155,6 @@ func RunBreathingEffect() {
 		log.Println("RunBreathingEffect: already running, skipping")
 		return
 	}
-	breathingRunning = true
 	breathingStopChan = make(chan bool)
 
 	go func() {
@@ -204,11 +203,9 @@ func StopBreathingEffect() {
 		log.Println("StopBreathingEffect: sending stop")
 		close(breathingStopChan)
 		breathingStopChan = nil
-		time.Sleep(100 * time.Millisecond)
-	} else {
-		log.Println("StopBreathingEffect: nothing to stop")
 	}
-	breathingRunning = false
+	breathingRunning = false // <-- moved here!
+	time.Sleep(100 * time.Millisecond)
 }
 
 func HasValidLEDChannel(channel int) bool {
