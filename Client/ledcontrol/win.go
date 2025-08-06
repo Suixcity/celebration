@@ -81,7 +81,7 @@ func ClearLEDs() {
 	}
 
 	leds := dev.Leds(0)
-	if leds == nil || len(leds) == 0 {
+	if len(leds) == 0 {
 		log.Println("ClearLEDs: LED array is nil or empty")
 		return
 	}
@@ -115,7 +115,7 @@ func RunBreathingEffect() {
 				ledMutex.Lock()
 				if dev != nil {
 					leds := dev.Leds(0)
-					if leds != nil && len(leds) > 0 {
+					if len(leds) > 0 {
 						t += 0.05
 						bright := math.Pow((math.Sin(t)+1.0)/2.0, 2.2)
 						for i := 0; i < config.LedCount && i < len(leds); i++ {
@@ -149,7 +149,7 @@ func celebrateAnimation(done chan struct{}) {
 				continue
 			}
 			leds := dev.Leds(0)
-			if leds == nil || len(leds) == 0 {
+			if len(leds) == 0 {
 				ledMutex.Unlock()
 				continue
 			}
