@@ -117,15 +117,16 @@ func RunBreathingEffect() {
 					leds := dev.Leds(0)
 					if len(leds) > 0 {
 						t += 0.00132
-						bright := (math.Sin(t) + 1.0) / 2.0
-						min := .05
+						raw := math.Sin(t) + 1.0/2.0
+						bright := math.Pow(raw, 2.2)
+						min := .15
 						if bright < min {
 							bright = min
 						}
 						val := uint32(255 * bright)
-						color := val << 8
+						//color := val << 8 green | val << 16 blue | val // RGB
 						for i := 0; i < config.LedCount && i < len(leds); i++ {
-							leds[i] = color
+							leds[i] = val
 						}
 						dev.Render()
 					}
