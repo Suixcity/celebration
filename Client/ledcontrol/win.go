@@ -97,10 +97,10 @@ func BlinkLEDs() {
 		log.Println("Running Celebration LED Animation!")
 		celebrateAnimation()
 
-		if dev != nil && config.LedCount > 0 {
+		if HasValidLEDChannel(0) {
 			RunBreathingEffect()
 		} else {
-			log.Println("BlinkLEDs: skipping RunBreathingEffect due to uninitialized dev or LED count")
+			log.Println("BlinkLEDs: skipping RunBreathingEffect due to invalid LED channel")
 		}
 	}()
 }
@@ -109,17 +109,12 @@ func celebrateAnimation() {
 	ledMutex.Lock()
 	defer ledMutex.Unlock()
 
-	if dev == nil {
-		log.Println("celebrateAnimation: dev is nil")
+	if !HasValidLEDChannel(0) {
+		log.Println("celebrateAnimation: invalid LED channel")
 		return
 	}
 
-	leds := safeGetLEDs(0)
-	if leds == nil || len(leds) == 0 {
-		log.Println("celebrateAnimation: no LEDs found on channel 0")
-		return
-	}
-
+	leds := dev.Leds(0)
 	colors := []int{colorRed, colorGreen, colorBlue}
 
 	for _, color := range colors {
@@ -137,17 +132,12 @@ func ClearLEDs() {
 	ledMutex.Lock()
 	defer ledMutex.Unlock()
 
-	if dev == nil {
-		log.Println("ClearLEDs: dev is nil")
+	if !HasValidLEDChannel(0) {
+		log.Println("ClearLEDs: invalid LED channel")
 		return
 	}
 
-	leds := safeGetLEDs(0)
-	if leds == nil || len(leds) == 0 {
-		log.Printf("ClearLEDs: no LEDs found on channel 0 (leds=%v, len=%d)", leds, len(leds))
-		return
-	}
-
+	leds := dev.Leds(0)
 	for i := 0; i < config.LedCount && i < len(leds); i++ {
 		leds[i] = colorOff
 	}
@@ -173,11 +163,11 @@ func RunBreathingEffect() {
 				ClearLEDs()
 				return
 			case <-ticker.C:
-				leds := safeGetLEDs(0)
-				if leds == nil || len(leds) == 0 {
+				if !HasValidLEDChannel(0) {
 					continue
 				}
 
+				leds := dev.Leds(0)
 				t += 0.05
 				brightness := (math.Sin(t) + 1.0) / 2.0
 				brightness = math.Pow(brightness, 2.2)
@@ -204,14 +194,15 @@ func StopBreathingEffect() {
 	}
 }
 
-func safeGetLEDs(channel int) []uint32 {
+func HasValidLEDChannel(channel int) bool {
 	if dev == nil {
-		return nil
+		return false
 	}
 	defer func() {
 		if r := recover(); r != nil {
-			log.Printf("safeGetLEDs: recovered from panic: %v", r)
+			log.Printf("HasValidLEDChannel: recovered from panic: %v", r)
 		}
 	}()
-	return dev.Leds(channel)
+	leds := dev.Leds(channel)
+	return leds != nil && len(leds) > 0
 }
