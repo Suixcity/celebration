@@ -141,7 +141,7 @@ func StopBreathingEffect() {
 
 func celebrateAnimation(done chan struct{}) {
 	go func() {
-		colors := []uint32{colorRed, colorGreen, colorBlue}
+		colors := []uint32{colorRed, colorBlue, colorGreen}
 		for _, c := range colors {
 			ledMutex.Lock()
 			if dev == nil {
