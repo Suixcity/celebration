@@ -164,11 +164,7 @@ func BlinkLEDs() {
 	log.Println("🎉 Celebration Triggered!")
 	StopBreathingEffect()
 
-	if err := InitLEDs(); err != nil {
-		log.Println("BlinkLEDs: InitLEDs failed:", err)
-		return
-	}
-
 	celebrateAnimation()
+
 	RunBreathingEffect()
 }
