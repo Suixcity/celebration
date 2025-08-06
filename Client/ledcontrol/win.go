@@ -33,6 +33,7 @@ var (
 	config            Config
 	ledMutex          sync.Mutex
 	breathingStopChan chan bool
+	breathingDone     chan struct{}
 	breathingRunning  bool
 )
 
@@ -112,7 +113,7 @@ func celebrateAnimation() {
 		return
 	}
 
-	colors := []int{colorRed, colorGreen, colorBlue, colorGreen, colorRed}
+	colors := []int{colorRed, colorGreen, colorBlue}
 	leds := dev.Leds(0)
 
 	if leds == nil || len(leds) == 0 {
@@ -142,7 +143,7 @@ func ClearLEDs() {
 
 	leds := dev.Leds(0)
 	if leds == nil || len(leds) == 0 {
-		log.Printf("ClearLEDs: no LEDs found on channel 0 (leds=%v, len=%d)", leds, len(leds))
+		log.Println("ClearLEDs: no LEDs found")
 		return
 	}
 
@@ -161,6 +162,7 @@ func RunBreathingEffect() {
 
 	log.Println("RunBreathingEffect: started")
 	breathingStopChan = make(chan bool)
+	breathingDone = make(chan struct{})
 	breathingRunning = true
 
 	go func() {
@@ -168,19 +170,16 @@ func RunBreathingEffect() {
 		defer ticker.Stop()
 		var t float64
 
+	loop:
 		for {
 			select {
 			case <-breathingStopChan:
 				log.Println("RunBreathingEffect: stop signal received")
-				ClearLEDs()
-				breathingRunning = false
-				log.Println("RunBreathingEffect: exited")
-				return
+				break loop
 			case <-ticker.C:
 				if dev == nil {
 					continue
 				}
-
 				leds := dev.Leds(0)
 				if leds == nil || len(leds) == 0 {
 					continue
@@ -193,7 +192,6 @@ func RunBreathingEffect() {
 				r := uint8(0 * brightness)
 				g := uint8(0 * brightness)
 				b := uint8(255 * brightness)
-
 				color := uint32(r)<<16 | uint32(g)<<8 | uint32(b)
 
 				for i := 0; i < config.LedCount && i < len(leds); i++ {
@@ -202,6 +200,11 @@ func RunBreathingEffect() {
 				dev.Render()
 			}
 		}
+
+		ClearLEDs()
+		breathingRunning = false
+		close(breathingDone)
+		log.Println("RunBreathingEffect: exited")
 	}()
 }
 
@@ -209,7 +212,9 @@ func StopBreathingEffect() {
 	if breathingStopChan != nil {
 		log.Println("StopBreathingEffect: sending stop")
 		close(breathingStopChan)
+		<-breathingDone
 		breathingStopChan = nil
+		breathingDone = nil
 	} else {
 		log.Println("StopBreathingEffect: nothing to stop")
 	}
