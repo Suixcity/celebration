@@ -32,6 +32,7 @@ var dev *ws2811.WS2811
 var config Config
 var ledMutex sync.Mutex
 var breathingStopChan chan bool
+var breathingRunning bool
 
 func LoadConfig() error {
 	file, err := os.Open("config.json")
@@ -98,6 +99,7 @@ func BlinkLEDs() {
 		celebrateAnimation()
 
 		if HasValidLEDChannel(0) {
+			log.Println("BlinkLEDs: starting RunBreathingEffect")
 			RunBreathingEffect()
 		} else {
 			log.Println("BlinkLEDs: skipping RunBreathingEffect due to invalid LED channel")
@@ -156,22 +158,26 @@ func ClearLEDs() {
 }
 
 func RunBreathingEffect() {
-	if breathingStopChan != nil {
-		close(breathingStopChan)
+	if breathingRunning {
+		log.Println("RunBreathingEffect: already running, skipping")
+		return
 	}
+	breathingRunning = true
 	breathingStopChan = make(chan bool)
 
 	go func() {
+		log.Println("RunBreathingEffect: started")
 		ticker := time.NewTicker(20 * time.Millisecond)
 		defer ticker.Stop()
 
 		var t float64
 
+	loop:
 		for {
 			select {
 			case <-breathingStopChan:
-				ClearLEDs()
-				return
+				log.Println("RunBreathingEffect: stop signal received")
+				break loop
 			case <-ticker.C:
 				leds := safeLedsSnapshot(0)
 				if leds == nil || len(leds) == 0 {
@@ -194,14 +200,22 @@ func RunBreathingEffect() {
 				dev.Render()
 			}
 		}
+		ClearLEDs()
+		breathingRunning = false
+		log.Println("RunBreathingEffect: exited")
 	}()
 }
 
 func StopBreathingEffect() {
 	if breathingStopChan != nil {
+		log.Println("StopBreathingEffect: sending stop")
 		close(breathingStopChan)
 		breathingStopChan = nil
+		time.Sleep(100 * time.Millisecond)
+	} else {
+		log.Println("StopBreathingEffect: nothing to stop")
 	}
+	breathingRunning = false
 }
 
 func HasValidLEDChannel(channel int) bool {
