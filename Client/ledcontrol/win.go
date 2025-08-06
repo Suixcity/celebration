@@ -105,6 +105,8 @@ func RunBreathingEffect() {
 		defer ticker.Stop()
 
 		var t float64
+		baseColor := colorGreen // customize: colorGreen, colorRed, etc.
+
 		for {
 			select {
 			case <-breathingStopChan:
@@ -117,23 +119,31 @@ func RunBreathingEffect() {
 				if dev != nil {
 					leds := dev.Leds(0)
 					if len(leds) > 0 {
-						// Advance wave
-						t += 0.00132 // 30s cycle @ 100fps
+						// Advance time for sine wave
+						t += 0.00132 // 30s full wave cycle @ 100fps
 
-						// Normalized sine: [0..1]
+						// Sine wave mapped to [0..1]
 						phase := (math.Sin(t) + 1.0) / 2.0
 
-						// Scale to [min .. 1.0]
-						min := 0.25
+						// Scale to stay within perceptual range [min..1]
+						min := 0.2
 						rangeScale := 1.0 - min
 						brightness := phase*rangeScale + min
 
-						// Convert to 8-bit value
-						val := uint32(brightness * 255)
+						// Extract base color components
+						r := float64((baseColor >> 16) & 0xFF)
+						g := float64((baseColor >> 8) & 0xFF)
+						b := float64(baseColor & 0xFF)
 
-						// Set LED color (green channel only)
-						color := val // 0x00GG00
+						// Scale each channel by brightness
+						rr := uint32(r * brightness)
+						gg := uint32(g * brightness)
+						bb := uint32(b * brightness)
 
+						// Recombine color
+						color := (rr << 16) | (gg << 8) | bb
+
+						// Apply to all LEDs
 						for i := 0; i < config.LedCount && i < len(leds); i++ {
 							leds[i] = color
 						}
