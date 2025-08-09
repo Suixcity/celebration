@@ -1,6 +1,9 @@
 package main
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -41,6 +44,10 @@ type DeviceConfig struct {
 	Idle   IdlePref              `json:"idle"`
 	Events map[string]EffectPref `json:"events"`
 }
+type ClientIdent struct {
+	DeviceID     string `json:"deviceId"`
+	DeviceSecret string `json:"deviceSecret"`
+}
 
 var deviceCfg = DeviceConfig{Events: map[string]EffectPref{}}
 
@@ -55,6 +62,29 @@ func loadConfig() {
 	if err := json.Unmarshal(data, &deviceCfg); err != nil {
 		log.Printf("config.json invalid (ignored): %v", err)
 	}
+}
+
+func loadIdent() (ClientIdent, error) {
+	var id ClientIdent
+	b, err := os.ReadFile(filepath.Join(".", "client.json"))
+	if err != nil {
+		return id, fmt.Errorf("read client.json: %w", err)
+	}
+	if err := json.Unmarshal(b, &id); err != nil {
+		return id, fmt.Errorf("parse client.json: %w", err)
+	}
+	if strings.TrimSpace(id.DeviceID) == "" || strings.TrimSpace(id.DeviceSecret) == "" {
+		return id, fmt.Errorf("client.json missing deviceId or deviceSecret")
+	}
+	return id, nil
+}
+
+func sign(deviceID, secret, ts string) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(deviceID))
+	mac.Write([]byte(":"))
+	mac.Write([]byte(ts))
+	return hex.EncodeToString(mac.Sum(nil))
 }
 
 // ---------- Idle manager (runs whatever you put in config.json) ----------
@@ -167,14 +197,27 @@ func resolvePrefs(msg WSMessage) (effect string, color uint32, cycles int) {
 
 // ---------- WebSocket client ----------
 func connectToWebSocket() {
+	ident, err := loadIdent()
+	if err != nil {
+		log.Fatalf("identity error: %v", err)
+	}
+
 	for {
-		c, _, err := websocket.DefaultDialer.Dial(serverURL, nil)
+		ts := fmt.Sprintf("%d", time.Now().Unix())
+
+		hdr := map[string][]string{
+			"X-Device-ID": {ident.DeviceID},
+			"X-Auth-Ts":   {ts},
+			"X-Auth-Sig":  {sign(ident.DeviceID, ident.DeviceSecret, ts)},
+		}
+
+		c, _, err := websocket.DefaultDialer.Dial(serverURL, hdr)
 		if err != nil {
-			log.Println("Failed to connect to server, retrying in 5 seconds...")
+			log.Println("WS connect failed (auth or net), retrying in 5s...", err)
 			time.Sleep(5 * time.Second)
 			continue
 		}
-		log.Println("Connected to WebSocket server")
+		log.Println("Connected to WebSocket server as", ident.DeviceID)
 		handleMessages(c)
 	}
 }
