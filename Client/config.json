@@ -1,5 +1,17 @@
 {
-    "ledPin": 18,
-    "ledCount": 300,
-    "brightness": 255
+  "ledPin": 18,
+  "ledCount": 300,
+  "brightness": 80,
+
+  "idle": {
+    "effect": "breath",
+    "color": "#0000FF",
+    "cycles": 0
+  },
+
+  "events": {
+    "deal_won":        { "effect": "blink",  "color": "#00FF00", "cycles": 3 },
+    "account_created": { "effect": "wipe",   "color": "#00FFAA", "cycles": 2 },
+    "celebrate":       { "effect": "blink",  "color": "#FF7F00", "cycles": 1 }
+  }
 }

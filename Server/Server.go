@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 
@@ -52,6 +53,25 @@ func handleWebhook(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "Invalid event", http.StatusBadRequest)
 }
 
+// POST /test/broadcast  body: raw text (string or JSON)
+// Sends exactly what you post to all connected clients (for Phase 0 testing)
+func handleTestBroadcast(w http.ResponseWriter, r *http.Request) {
+	b, err := io.ReadAll(r.Body)
+	if err != nil || len(b) == 0 {
+		http.Error(w, "empty body", http.StatusBadRequest)
+		return
+	}
+	for client := range clients {
+		if err := client.WriteMessage(websocket.TextMessage, b); err != nil {
+			log.Println("Error sending test message:", err)
+			client.Close()
+			delete(clients, client)
+		}
+	}
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("ok"))
+}
+
 func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -90,6 +110,7 @@ func broadcastMessage(message string) {
 func main() {
 	http.HandleFunc("/", handleWebhook)
 	http.HandleFunc("/ws", handleWebSocket)
+	http.HandleFunc("/test/broadcast", handleTestBroadcast)
 
 	port := "10000" // Matches Render setup
 	fmt.Println("Server listening on port", port)
