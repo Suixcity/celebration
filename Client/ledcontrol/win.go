@@ -255,7 +255,7 @@ func RunBreathingEffect() {
 
 		const secondsPerCycle = 12.0
 		// Nonzero base so it never *intends* to go dark. Bump a touch if you still see blacks.
-		const minDuty = 0.15
+		const minDuty = 0.20
 		omega := 2 * math.Pi / secondsPerCycle
 		start := time.Now()
 
