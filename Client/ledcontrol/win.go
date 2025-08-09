@@ -691,3 +691,86 @@ func blinkStrip(times int, onColor uint32, period time.Duration) {
 		time.Sleep(period)
 	}
 }
+
+// RunEffect dispatches simple, composable effects.
+// effect: "blink" | "rainbow" | "wipe"
+// color:  0xRRGGBB
+// cycles: repeats for effects that support it
+func RunEffect(effect string, color uint32, cycles int) {
+	if err := InitLEDs(); err != nil {
+		log.Fatal(err)
+	}
+	defer ClearLEDs()
+
+	switch effect {
+	case "blink":
+		if cycles <= 0 {
+			cycles = 3
+		}
+		for c := 0; c < cycles; c++ {
+			fill(color)
+			dev.Render()
+			time.Sleep(500 * time.Millisecond)
+			ClearLEDs()
+			time.Sleep(250 * time.Millisecond)
+		}
+	case "wipe":
+		if cycles <= 0 {
+			cycles = 1
+		}
+		for c := 0; c < cycles; c++ {
+			colorWipe(color, 5*time.Millisecond)
+			time.Sleep(200 * time.Millisecond)
+			ClearLEDs()
+		}
+	case "rainbow":
+		if cycles <= 0 {
+			cycles = 1
+		}
+		for c := 0; c < cycles; c++ {
+			rainbowCycle(2 * time.Millisecond)
+		}
+	default:
+		// fallback to your existing celebrateAnimation
+		done := make(chan struct{})
+		celebrateAnimation(done)
+	}
+}
+
+func fill(color uint32) {
+	for i := 0; i < config.LedCount; i++ {
+		dev.Leds(0)[i] = color
+	}
+}
+
+func colorWipe(color uint32, delay time.Duration) {
+	for i := 0; i < config.LedCount; i++ {
+		dev.Leds(0)[i] = color
+		dev.Render()
+		time.Sleep(delay)
+	}
+}
+
+func wheel(pos int) uint32 {
+	pos = 255 - pos
+	switch {
+	case pos < 85:
+		return uint32((255-pos)<<16 | 0<<8 | pos)
+	case pos < 170:
+		pos -= 85
+		return uint32(0<<16 | pos<<8 | (255 - pos))
+	default:
+		pos -= 170
+		return uint32(pos<<16 | (255-pos)<<8)
+	}
+}
+
+func rainbowCycle(delay time.Duration) {
+	for j := 0; j < 256*3; j++ {
+		for i := 0; i < config.LedCount; i++ {
+			dev.Leds(0)[i] = wheel((i*256/config.LedCount + j) & 255)
+		}
+		dev.Render()
+		time.Sleep(delay)
+	}
+}
