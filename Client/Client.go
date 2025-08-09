@@ -54,7 +54,12 @@ func handleMessages(c *websocket.Conn) {
 
 		case "deal_created":
 			log.Println("📩 Deal created → Shoot animation")
-			ledcontrol.ShootLEDs()
+			ledcontrol.ShootBounceLEDs(
+				0xFF0000,            // RGB cycle
+				8,                   // tail
+				12*time.Millisecond, // frameDelay
+				1,                   // Bounces
+			)
 		case "deal_won":
 			log.Println("📩 Deal won → Stacked Shoot")
 			ledcontrol.DealWonStackedShootConcurrent(
