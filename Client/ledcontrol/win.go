@@ -229,7 +229,7 @@ func RunBreathingEffect() {
 		baseColor = colorBlue
 	}
 
-	// Pre‑compensated floor so global brightness won’t zero it out
+	// Pre‑compensated floor so global brightness won’t zero the output
 	floor := minLSBFromGlobal()
 
 	breathingStopChan = make(chan struct{})
@@ -244,7 +244,7 @@ func RunBreathingEffect() {
 		defer ticker.Stop()
 
 		const secondsPerCycle = 12.0
-		const minDuty = 0.10 // 10% base so it never “looks off”
+		const minDuty = 0.10 // 10% base so it never *intends* to go off
 		omega := 2 * math.Pi / secondsPerCycle
 		start := time.Now()
 
