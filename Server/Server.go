@@ -180,7 +180,7 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 	devMu.Lock()
 	if _, exists := devices[id]; exists {
 		devMu.Unlock()
-		http.Error(w, "device exists", 409)
+		http.Error(w, "device exists", http.StatusConflict)
 		return
 	}
 	devices[id] = Device{ID: id, Secret: secret, Label: req.Label}
@@ -236,28 +236,28 @@ func deviceExists(id string) bool {
 func handleWS(w http.ResponseWriter, r *http.Request) {
 	devID, ts, sig := r.Header.Get("X-Device-ID"), r.Header.Get("X-Auth-Ts"), r.Header.Get("X-Auth-Sig")
 	if devID == "" || ts == "" || sig == "" {
-		http.Error(w, "missing auth headers", 401)
+		http.Error(w, "missing auth headers", http.StatusUnauthorized)
 		return
 	}
 	if !deviceExists(devID) {
-		http.Error(w, "unknown device", 401)
+		http.Error(w, "unknown device", http.StatusUnauthorized)
 		return
 	}
 	sec := deviceSecret(devID)
 	if sec == "" {
-		http.Error(w, "no secret", 401)
+		http.Error(w, "no secret", http.StatusUnauthorized)
 		return
 	}
 
 	tUnix, err := strconv.ParseInt(ts, 10, 64)
 	if err != nil || abs(time.Now().Unix()-tUnix) > 300 {
-		http.Error(w, "timestamp skew", 401)
+		http.Error(w, "timestamp skew", http.StatusUnauthorized)
 		return
 	}
 
 	want := makeSig(devID, sec, ts)
 	if !hmac.Equal([]byte(strings.ToLower(sig)), []byte(want)) {
-		http.Error(w, "bad signature", 401)
+		http.Error(w, "bad signature", http.StatusUnauthorized)
 		return
 	}
 
