@@ -19,10 +19,10 @@ import (
 //
 
 const (
-	colorRed   = 0xFF0000
-	colorGreen = 0x00FF00
-	colorBlue  = 0x0000FF
-	colorOff   = 0x000000
+	colorRed   uint32 = 0xFF0000
+	colorGreen uint32 = 0x00FF00
+	colorBlue  uint32 = 0x0000FF
+	colorOff   uint32 = 0x000000
 )
 
 type Config struct {
@@ -134,8 +134,58 @@ var (
 	breathingWg       sync.WaitGroup
 )
 
+// scaleColorWithFloor scales a 0xRRGGBB color by gain (0..1),
+// but ensures each non-zero channel is at least floorLSB when gain > 0.
+// This avoids rounding down to 0 at low brightness.
+func scaleColorWithFloor(color uint32, gain float64, floorLSB uint32) uint32 {
+	if gain <= 0 {
+		return colorOff
+	}
+	if gain > 1 {
+		gain = 1
+	}
+	baseR := uint32((color >> 16) & 0xFF)
+	baseG := uint32((color >> 8) & 0xFF)
+	baseB := uint32(color & 0xFF)
+
+	scale := func(v uint32) uint32 {
+		if v == 0 {
+			return 0
+		}
+		s := uint32(float64(v) * gain)
+		if s == 0 {
+			s = floorLSB // keep at least 1 LSB so it never goes fully dark
+		}
+		if s > 255 {
+			s = 255
+		}
+		return s
+	}
+
+	r := scale(baseR)
+	g := scale(baseG)
+	b := scale(baseB)
+	return (r << 16) | (g << 8) | b
+}
+
+func setAllLEDs(col uint32) {
+	ledMutex.Lock()
+	defer ledMutex.Unlock()
+	if dev == nil {
+		return
+	}
+	leds := dev.Leds(0)
+	max := min(config.LedCount, len(leds))
+	for i := 0; i < max; i++ {
+		leds[i] = col
+	}
+	dev.Render()
+}
+
 func RunBreathingEffect() {
+	// Stop any existing breathing first
 	StopBreathingEffect()
+
 	if err := EnsureInit(); err != nil {
 		log.Printf("RunBreathingEffect: init failed: %v", err)
 		return
@@ -147,12 +197,24 @@ func RunBreathingEffect() {
 	breathingWg.Add(1)
 	go func() {
 		defer breathingWg.Done()
-		ticker := time.NewTicker(10 * time.Millisecond) // ~100 FPS
+
+		// ~100 FPS feels smooth for fades
+		const frame = 10 * time.Millisecond
+		ticker := time.NewTicker(frame)
 		defer ticker.Stop()
 
-		var t float64
-		baseColor := colorBlue // change default if desired
+		// Choose your base idle color here; you can make this configurable if you like
+		baseColor := colorBlue
 
+		// Minimum “duty” (0..1). 0.08 ≈ 8% keeps pixels faintly on at the low point.
+		const minDuty = 0.08
+
+		// Breathing speed (seconds per full cycle). Adjust to taste.
+		const secondsPerCycle = 12.0
+		// Angular speed for sine wave
+		omega := 2 * math.Pi / secondsPerCycle
+
+		start := time.Now()
 		for {
 			select {
 			case <-breathingStopChan:
@@ -160,39 +222,16 @@ func RunBreathingEffect() {
 				ClearLEDs()
 				return
 
-			case <-ticker.C:
-				ledMutex.Lock()
-				if dev != nil {
-					leds := dev.Leds(0)
-					if len(leds) > 0 {
-						t += 0.00132 // ~30s wave @ 100fps
+			case now := <-ticker.C:
+				// 0..1 wave using sin, eased by squaring for nicer low-end time
+				elapsed := now.Sub(start).Seconds()
+				phase := (math.Sin(omega*elapsed) + 1.0) / 2.0 // 0..1
+				// apply perceptual easing + clamp floor
+				phase = phase * phase // bias toward low end for a softer feel
+				brightness := minDuty + (1.0-minDuty)*phase
 
-						// 0..1 “breath” wave
-						phase := (math.Sin(t) + 1.0) / 2.0
-
-						// perceptual floor
-						min := 0.2
-						brightness := phase*(1.0-min) + min
-
-						baseR := float64((baseColor >> 16) & 0xFF)
-						baseG := float64((baseColor >> 8) & 0xFF)
-						baseB := float64(baseColor & 0xFF)
-
-						scale := func(v float64) uint32 { return uint32(v * brightness) }
-
-						rr := scale(baseR)
-						gg := scale(baseG)
-						bb := scale(baseB)
-
-						col := (rr << 16) | (gg << 8) | bb
-
-						for i := 0; i < config.LedCount && i < len(leds); i++ {
-							leds[i] = col
-						}
-						dev.Render()
-					}
-				}
-				ledMutex.Unlock()
+				col := scaleColorWithFloor(baseColor, brightness, 1) // floorLSB=1
+				setAllLEDs(col)
 			}
 		}
 	}()

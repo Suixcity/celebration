@@ -1,7 +1,7 @@
 {
   "ledPin": 18,
   "ledCount": 300,
-  "brightness": 255,
+  "brightness": 200,
 
   "idle": {
     "effect": "breath",
