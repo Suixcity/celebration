@@ -158,8 +158,9 @@ var (
 	breathingWg       sync.WaitGroup
 )
 
-// scaleColorWithFloor scales 0xRRGGBB by gain [0..1], ensuring each nonzero
-// channel is at least floorLSB when gain > 0 (pre‑compensated for global brightness).
+// ---- 1) Keep tiny channels from quantizing to 0 after global brightness ----
+// Scales 0xRRGGBB by gain [0..1], but guarantees each non‑zero channel
+// is at least floorLSB (pre‑brightness) when gain > 0.
 func scaleColorWithFloor(color uint32, gain float64, floorLSB uint32) uint32 {
 	if gain <= 0 {
 		return colorOff
@@ -176,8 +177,10 @@ func scaleColorWithFloor(color uint32, gain float64, floorLSB uint32) uint32 {
 			return 0
 		}
 		s := uint32(float64(v) * gain)
-		if s == 0 {
-			s = floorLSB // keep at least N LSB pre‑global‑brightness
+		// IMPORTANT: clamp anything below floorLSB up to floorLSB,
+		// not just when s == 0 — avoids (1 * brightness)>>8 → 0.
+		if s < floorLSB {
+			s = floorLSB
 		}
 		if s > 255 {
 			s = 255
@@ -191,14 +194,20 @@ func scaleColorWithFloor(color uint32, gain float64, floorLSB uint32) uint32 {
 	return (r << 16) | (g << 8) | b
 }
 
-// minLSBFromGlobal returns the minimum pre‑brightness LSB that will survive
-// the ws281x driver’s global brightness scaling (uses >>8, i.e. /256).
+// ---- 2) Compute a safe floor that survives the driver’s brightness scaling ----
+// For ws281x brightness (0..255) which effectively divides by ~256,
+// we want the smallest pre‑scaled value that won’t round to 0.
 func minLSBFromGlobal() uint32 {
 	b := config.Brightness
-	if b <= 0 || b >= 255 {
+	if b <= 0 {
+		// brightness off → force 1 so we still light at least 1 LSB
 		return 1
 	}
-	// ceil(256 / b)
+	if b >= 255 {
+		// full brightness, 1 LSB will pass through
+		return 1
+	}
+	// ceil(256 / b) — slightly more conservative than 255/b
 	return uint32((256 + b - 1) / b)
 }
 
@@ -216,6 +225,7 @@ func setAllLEDs(col uint32) {
 	dev.Render()
 }
 
+// ---- 3) Breathing loop with a nonzero base & the new floor applied ----
 func RunBreathingEffect() {
 	StopBreathingEffect()
 	if err := EnsureInit(); err != nil {
@@ -223,13 +233,13 @@ func RunBreathingEffect() {
 		return
 	}
 
-	// Pick idle color from config, fallback to blue
+	// Use your idle color from config; fallback to blue.
 	baseColor := parseHexColor(config.Idle.Color)
 	if baseColor == 0 {
 		baseColor = colorBlue
 	}
 
-	// Pre‑compensated floor so global brightness won’t zero the output
+	// Pre‑compensated floor to survive global brightness scaling.
 	floor := minLSBFromGlobal()
 
 	breathingStopChan = make(chan struct{})
@@ -244,7 +254,8 @@ func RunBreathingEffect() {
 		defer ticker.Stop()
 
 		const secondsPerCycle = 12.0
-		const minDuty = 0.10 // 10% base so it never *intends* to go off
+		// Nonzero base so it never *intends* to go dark. Bump a touch if you still see blacks.
+		const minDuty = 0.12
 		omega := 2 * math.Pi / secondsPerCycle
 		start := time.Now()
 
@@ -257,7 +268,7 @@ func RunBreathingEffect() {
 
 			case now := <-ticker.C:
 				elapsed := now.Sub(start).Seconds()
-				// 0..1 sine wave, eased near the bottom for nicer linger
+				// 0..1 sine wave; square for more time near low brightness
 				phase := (math.Sin(omega*elapsed) + 1.0) / 2.0
 				phase = phase * phase
 				brightness := minDuty + (1.0-minDuty)*phase
