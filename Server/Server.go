@@ -35,6 +35,10 @@ func handleWebhook(w http.ResponseWriter, r *http.Request) {
 			log.Println("💼 Deal Created - Sending animation")
 			broadcastMessage("deal_created") // deal animation
 
+		case "deal_won":
+			log.Println("🎉 Deal Won - Sending animation")
+			broadcastMessage("deal_won")
+
 		default:
 			http.Error(w, "Unknown event", http.StatusBadRequest)
 			return

@@ -55,6 +55,9 @@ func handleMessages(c *websocket.Conn) {
 		case "deal_created":
 			log.Println("📩 Deal created → Shoot animation")
 			ledcontrol.ShootLEDs()
+		case "deal_won":
+			log.Println("📩 Deal won → Stacked Shoot")
+			ledcontrol.DealWonStackedShoot()
 
 		default:
 			log.Printf("📩 Unhandled message: %q\n", msg)

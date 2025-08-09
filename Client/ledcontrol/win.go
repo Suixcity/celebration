@@ -296,3 +296,132 @@ func min(a, b int) int {
 	}
 	return b
 }
+
+// DealWonStackedShoot stacks comet shots from the END backward until full,
+// alternating colors per shot, then blinks 3x and resumes breathing.
+func DealWonStackedShoot() {
+	log.Println("🏁 Deal Won → Stacked Shoot")
+	StopBreathingEffect()
+
+	done := make(chan struct{})
+	go shootStackedAnimation(
+		[]uint32{colorRed, colorBlue, colorGreen}, // alternating shot colors
+		8,                                        // tail length
+		15*time.Millisecond,                      // speed
+		3,                                        // blinks at the end
+		done,
+	)
+
+	go func() {
+		<-done
+		RunBreathingEffect()
+	}()
+}
+
+func shootStackedAnimation(colors []uint32, tail int, frameDelay time.Duration, blinks int, done chan struct{}) {
+	if tail < 1 {
+		tail = 1
+	}
+
+	n := config.LedCount
+	if n <= 0 {
+		close(done)
+		return
+	}
+
+	// persist holds the "filled" region colors that accumulate at the END (highest indexes)
+	persist := make([]uint32, n)
+
+	// filledStart is the first index of the filled region [filledStart..n-1]
+	filledStart := n
+	colorIdx := 0
+
+	for filledStart > 0 {
+		shotColor := colors[colorIdx%len(colors)]
+		colorIdx++
+
+		// Animate a single comet through the unfilled region (0..filledStart-1)
+		for step := 0; step < filledStart+tail; step++ {
+			ledMutex.Lock()
+			if dev == nil {
+				ledMutex.Unlock()
+				time.Sleep(frameDelay)
+				continue
+			}
+			leds := dev.Leds(0)
+			max := min(n, len(leds))
+
+			// base frame = persistent filled region (at the end)
+			for i := 0; i < max; i++ {
+				leds[i] = persist[i]
+			}
+
+			// draw moving comet only in the UNFILLED region
+			for t := 0; t < tail; t++ {
+				pos := step - t
+				if pos < 0 || pos >= filledStart || pos >= max {
+					continue
+				}
+				factor := 1.0 - (float64(t) / float64(tail)) // head=1 → tail→0
+				leds[pos] = fadeColor(shotColor, factor)
+			}
+
+			dev.Render()
+			ledMutex.Unlock()
+			time.Sleep(frameDelay)
+		}
+
+		// Commit this shot as a new chunk at the END, growing backward
+		chunk := min(tail, filledStart)
+		for i := 0; i < chunk; i++ {
+			persist[filledStart-1-i] = shotColor
+		}
+		filledStart -= chunk
+	}
+
+	// Show the fully filled strip once
+	ledMutex.Lock()
+	if dev != nil {
+		leds := dev.Leds(0)
+		max := min(n, len(leds))
+		for i := 0; i < max; i++ {
+			leds[i] = persist[i]
+		}
+		dev.Render()
+	}
+	ledMutex.Unlock()
+
+	// Blink 3x (white) before returning to normal state
+	blinkStrip(blinks, 0xFFFFFF, 220*time.Millisecond)
+
+	ClearLEDs()
+	close(done)
+}
+
+func blinkStrip(times int, onColor uint32, period time.Duration) {
+	for i := 0; i < times; i++ {
+		ledMutex.Lock()
+		if dev != nil {
+			leds := dev.Leds(0)
+			max := min(config.LedCount, len(leds))
+			for i := 0; i < max; i++ {
+				leds[i] = onColor
+			}
+			dev.Render()
+		}
+		ledMutex.Unlock()
+		time.Sleep(period)
+
+		ledMutex.Lock()
+		if dev != nil {
+			leds := dev.Leds(0)
+			max := min(config.LedCount, len(leds))
+			for i := 0; i < max; i++ {
+				leds[i] = colorOff
+			}
+			dev.Render()
+		}
+		ledMutex.Unlock()
+		time.Sleep(period)
+	}
+}
