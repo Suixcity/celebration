@@ -2,24 +2,25 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"strings"
 	"time"
-	"fmt"
+
+	"celebration/ledcontrol"
 
 	"github.com/gorilla/websocket"
-	"celebration/ledcontrol"
 )
 
 var serverURL = "wss://webhook-listener-2i7r.onrender.com/ws"
 
 // Wire format for Phase 1
 type WSMessage struct {
-	Type      string `json:"type"`       // e.g., "deal_won", "account_created", "ping"
-	Effect    string `json:"effect"`     // e.g., "blink", "rainbow", "wipe"
-	ColorHex  string `json:"color"`      // e.g., "#FF0000" or "FF0000"
-	Cycles    int    `json:"cycles"`     // optional repeats for some effects
-	AccountID string `json:"accountId"`  // optional future use
+	Type      string `json:"type"`      // e.g., "deal_won", "account_created", "ping"
+	Effect    string `json:"effect"`    // e.g., "blink", "rainbow", "wipe"
+	ColorHex  string `json:"color"`     // e.g., "#FF0000" or "FF0000"
+	Cycles    int    `json:"cycles"`    // optional repeats for some effects
+	AccountID string `json:"accountId"` // optional future use
 }
 
 // minimal fmt.Sscanf wrapper to keep imports tidy
@@ -27,7 +28,6 @@ type WSMessage struct {
 func fmtSscanf(str, format string, a ...interface{}) (int, error) {
 	return fmt.Sscanf(str, format, a...)
 }
-
 
 func connectToWebSocket() {
 	for {
@@ -124,4 +124,9 @@ func parseHexColor(s string) uint32 {
 // tiny sscanf helper without pulling extra deps
 func sscanf(str, format string, a ...interface{}) (int, error) {
 	return fmtSscanf(str, format, a...)
+}
+
+func main() {
+	log.Println("Starting WebSocket Client...")
+	connectToWebSocket()
 }
