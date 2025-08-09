@@ -28,19 +28,19 @@ const (
 )
 
 type idleCfg struct {
-	Color string `json:"color"`
+	Color string `json:"color"` // "#RRGGBB" breathing color
 }
 
 type Config struct {
 	LedPin     int     `json:"ledPin"`
 	LedCount   int     `json:"ledCount"`
-	Brightness int     `json:"brightness"`
+	Brightness int     `json:"brightness"` // 0..255 (driver scales)
 	Idle       idleCfg `json:"idle"`
 }
 
 var (
 	dev      *ws2811.WS2811
-	config   = Config{LedPin: 18, LedCount: 300, Brightness: 50}
+	config   = Config{LedPin: 18, LedCount: 300, Brightness: 255}
 	ledMutex sync.Mutex
 )
 
@@ -65,7 +65,6 @@ func LoadConfig() error {
 	if tmp.Brightness != 0 {
 		config.Brightness = tmp.Brightness
 	}
-	// copy idle.color even if empty (empty just means “use fallback” later)
 	config.Idle.Color = strings.TrimSpace(tmp.Idle.Color)
 	return nil
 }
@@ -130,7 +129,6 @@ func ClearLEDs() {
 }
 
 // parseHexColor parses "#RRGGBB" or "RRGGBB" into 0xRRGGBB as uint32.
-// Returns 0 if the string is invalid.
 func parseHexColor(s string) uint32 {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -155,16 +153,13 @@ func parseHexColor(s string) uint32 {
 // ==================
 //
 
-// Your existing breathing engine retained.
-// Start it when idle; stop it for event effects, then resume.
-
 var (
 	breathingStopChan chan struct{}
 	breathingWg       sync.WaitGroup
 )
 
 // scaleColorWithFloor scales 0xRRGGBB by gain [0..1], ensuring each nonzero
-// channel is at least floorLSB when gain > 0 (pre-compensated for global brightness).
+// channel is at least floorLSB when gain > 0 (pre‑compensated for global brightness).
 func scaleColorWithFloor(color uint32, gain float64, floorLSB uint32) uint32 {
 	if gain <= 0 {
 		return colorOff
@@ -196,15 +191,15 @@ func scaleColorWithFloor(color uint32, gain float64, floorLSB uint32) uint32 {
 	return (r << 16) | (g << 8) | b
 }
 
-// minLSBFromGlobal returns the minimum pre-brightness LSB that will survive
-// the ws281x driver's global brightness scaling.
+// minLSBFromGlobal returns the minimum pre‑brightness LSB that will survive
+// the ws281x driver’s global brightness scaling (uses >>8, i.e. /256).
 func minLSBFromGlobal() uint32 {
 	b := config.Brightness
 	if b <= 0 || b >= 255 {
 		return 1
 	}
-	// ceil(255 / b)
-	return uint32((255 + b - 1) / b)
+	// ceil(256 / b)
+	return uint32((256 + b - 1) / b)
 }
 
 func setAllLEDs(col uint32) {
@@ -222,9 +217,7 @@ func setAllLEDs(col uint32) {
 }
 
 func RunBreathingEffect() {
-	// Stop any existing breathing first
 	StopBreathingEffect()
-
 	if err := EnsureInit(); err != nil {
 		log.Printf("RunBreathingEffect: init failed: %v", err)
 		return
@@ -236,7 +229,7 @@ func RunBreathingEffect() {
 		baseColor = colorBlue
 	}
 
-	// Pre‑compensate the pixel floor so global brightness won’t zero it out
+	// Pre‑compensated floor so global brightness won’t zero it out
 	floor := minLSBFromGlobal()
 
 	breathingStopChan = make(chan struct{})
@@ -322,8 +315,6 @@ func BlinkLEDs() {
 
 	done := make(chan struct{})
 	celebrateAnimation(done)
-
-	// Block until the animation is finished.
 	<-done
 }
 
@@ -659,8 +650,6 @@ func rainbowCycle(delay time.Duration) {
 // =============================
 //
 
-// RunEffect: simple built-ins with color/cycles,
-// fully lifecycle-managed (init/cleanup) so they’re safe.
 func RunEffect(effect string, color uint32, cycles int) {
 	StopBreathingEffect()
 	if err := EnsureInit(); err != nil {
@@ -715,11 +704,8 @@ func RunEffect(effect string, color uint32, cycles int) {
 	}
 }
 
-// RunEffectByName: call your named effects or fall back to generic ones.
-// This is what your Client.go calls when it looks up preferences.
 func RunEffectByName(effect string, color uint32, cycles int) {
 	switch effect {
-	// --- Your legacy/named effects (self-managed) ---
 	case "celebrate_legacy":
 		BlinkLEDs()
 		return
@@ -733,13 +719,11 @@ func RunEffectByName(effect string, color uint32, cycles int) {
 		DealWonStackedShoot()
 		return
 
-	// --- Generic managed effects ---
 	case "blink", "wipe", "rainbow":
 		RunEffect(effect, color, cycles)
 		return
 
 	default:
-		// unknown name → something festive
 		BlinkLEDs()
 	}
 }
