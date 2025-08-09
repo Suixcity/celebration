@@ -236,7 +236,6 @@ func celebrateAnimation(done chan struct{}) {
 
 func BlinkLEDs() {
 	log.Println("🎉 Celebration Triggered!")
-	StopBreathingEffect()
 
 	if err := EnsureInit(); err != nil {
 		log.Printf("BlinkLEDs: init failed: %v", err)
@@ -246,10 +245,8 @@ func BlinkLEDs() {
 	done := make(chan struct{})
 	celebrateAnimation(done)
 
-	go func() {
-		<-done
-		RunBreathingEffect()
-	}()
+	// Block until the animation is finished.
+	<-done
 }
 
 //
@@ -260,7 +257,6 @@ func BlinkLEDs() {
 
 func ShootLEDs() {
 	log.Println("🚀 Shoot effect triggered")
-	StopBreathingEffect()
 
 	if err := EnsureInit(); err != nil {
 		log.Printf("ShootLEDs: init failed: %v", err)
@@ -270,15 +266,11 @@ func ShootLEDs() {
 	done := make(chan struct{})
 	go shootAnimation(colorBlue, 8, 20*time.Millisecond, done)
 
-	go func() {
-		<-done
-		RunBreathingEffect()
-	}()
+	<-done
 }
 
 func ShootBounceLEDs(headColor uint32, tail int, frameDelay time.Duration, bounces int) {
 	log.Println("🏓 Shoot bounce")
-	StopBreathingEffect()
 
 	if err := EnsureInit(); err != nil {
 		log.Printf("ShootBounceLEDs: init failed: %v", err)
@@ -341,10 +333,7 @@ func ShootBounceLEDs(headColor uint32, tail int, frameDelay time.Duration, bounc
 		close(done)
 	}()
 
-	go func() {
-		<-done
-		RunBreathingEffect()
-	}()
+	<-done
 }
 
 func shootAnimation(headColor uint32, tail int, frameDelay time.Duration, done chan struct{}) {
@@ -390,7 +379,6 @@ func shootAnimation(headColor uint32, tail int, frameDelay time.Duration, done c
 
 func DealWonStackedShoot() {
 	log.Println("🏁 Deal Won → Stacked Shoot")
-	StopBreathingEffect()
 
 	if err := EnsureInit(); err != nil {
 		log.Printf("DealWonStackedShoot: init failed: %v", err)
@@ -400,16 +388,13 @@ func DealWonStackedShoot() {
 	done := make(chan struct{})
 	go shootStackedAnimation(
 		[]uint32{colorRed, colorBlue, colorGreen},
-		8,                   // tail
-		15*time.Millisecond, // speed
-		3,                   // blinks
+		8,
+		15*time.Millisecond,
+		3,
 		done,
 	)
 
-	go func() {
-		<-done
-		RunBreathingEffect()
-	}()
+	<-done
 }
 
 func shootStackedAnimation(colors []uint32, tail int, frameDelay time.Duration, blinks int, done chan struct{}) {
@@ -605,10 +590,8 @@ func RunEffect(effect string, color uint32, cycles int) {
 		return
 	}
 	defer func() {
-		// leave device up if you immediately resume idle; otherwise cleanup
 		ClearLEDs()
 		CleanupLEDs()
-		RunBreathingEffect()
 	}()
 
 	switch effect {
