@@ -6,6 +6,8 @@ import (
 	"log"
 	"math"
 	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -25,10 +27,15 @@ const (
 	colorOff   uint32 = 0x000000
 )
 
+type idleCfg struct {
+	Color string `json:"color"`
+}
+
 type Config struct {
-	LedPin     int `json:"ledPin"`
-	LedCount   int `json:"ledCount"`
-	Brightness int `json:"brightness"`
+	LedPin     int     `json:"ledPin"`
+	LedCount   int     `json:"ledCount"`
+	Brightness int     `json:"brightness"`
+	Idle       idleCfg `json:"idle"`
 }
 
 var (
@@ -44,11 +51,11 @@ func LoadConfig() error {
 		return nil
 	}
 	defer f.Close()
+
 	var tmp Config
 	if err := json.NewDecoder(f).Decode(&tmp); err != nil {
 		return fmt.Errorf("failed to parse config: %v", err)
 	}
-	// only override if present
 	if tmp.LedPin != 0 {
 		config.LedPin = tmp.LedPin
 	}
@@ -58,6 +65,8 @@ func LoadConfig() error {
 	if tmp.Brightness != 0 {
 		config.Brightness = tmp.Brightness
 	}
+	// copy idle.color even if empty (empty just means “use fallback” later)
+	config.Idle.Color = strings.TrimSpace(tmp.Idle.Color)
 	return nil
 }
 
@@ -120,6 +129,26 @@ func ClearLEDs() {
 	dev.Render()
 }
 
+// parseHexColor parses "#RRGGBB" or "RRGGBB" into 0xRRGGBB as uint32.
+// Returns 0 if the string is invalid.
+func parseHexColor(s string) uint32 {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0
+	}
+	if s[0] == '#' {
+		s = s[1:]
+	}
+	if len(s) != 6 {
+		return 0
+	}
+	v, err := strconv.ParseUint(s, 16, 32)
+	if err != nil {
+		return 0
+	}
+	return uint32(v)
+}
+
 //
 // ==================
 //  Idle: Breathing
@@ -134,9 +163,8 @@ var (
 	breathingWg       sync.WaitGroup
 )
 
-// scaleColorWithFloor scales a 0xRRGGBB color by gain (0..1),
-// but ensures each non-zero channel is at least floorLSB when gain > 0.
-// This avoids rounding down to 0 at low brightness.
+// scaleColorWithFloor scales 0xRRGGBB by gain [0..1], ensuring each nonzero
+// channel is at least floorLSB when gain > 0 (pre-compensated for global brightness).
 func scaleColorWithFloor(color uint32, gain float64, floorLSB uint32) uint32 {
 	if gain <= 0 {
 		return colorOff
@@ -154,7 +182,7 @@ func scaleColorWithFloor(color uint32, gain float64, floorLSB uint32) uint32 {
 		}
 		s := uint32(float64(v) * gain)
 		if s == 0 {
-			s = floorLSB // keep at least 1 LSB so it never goes fully dark
+			s = floorLSB // keep at least N LSB pre‑global‑brightness
 		}
 		if s > 255 {
 			s = 255
@@ -166,6 +194,17 @@ func scaleColorWithFloor(color uint32, gain float64, floorLSB uint32) uint32 {
 	g := scale(baseG)
 	b := scale(baseB)
 	return (r << 16) | (g << 8) | b
+}
+
+// minLSBFromGlobal returns the minimum pre-brightness LSB that will survive
+// the ws281x driver's global brightness scaling.
+func minLSBFromGlobal() uint32 {
+	b := config.Brightness
+	if b <= 0 || b >= 255 {
+		return 1
+	}
+	// ceil(255 / b)
+	return uint32((255 + b - 1) / b)
 }
 
 func setAllLEDs(col uint32) {
@@ -191,6 +230,15 @@ func RunBreathingEffect() {
 		return
 	}
 
+	// Pick idle color from config, fallback to blue
+	baseColor := parseHexColor(config.Idle.Color)
+	if baseColor == 0 {
+		baseColor = colorBlue
+	}
+
+	// Pre‑compensate the pixel floor so global brightness won’t zero it out
+	floor := minLSBFromGlobal()
+
 	breathingStopChan = make(chan struct{})
 	log.Println("RunBreathingEffect: starting")
 
@@ -198,23 +246,15 @@ func RunBreathingEffect() {
 	go func() {
 		defer breathingWg.Done()
 
-		// ~100 FPS feels smooth for fades
-		const frame = 10 * time.Millisecond
+		const frame = 10 * time.Millisecond // ~100 fps
 		ticker := time.NewTicker(frame)
 		defer ticker.Stop()
 
-		// Choose your base idle color here; you can make this configurable if you like
-		baseColor := colorBlue
-
-		// Minimum “duty” (0..1). 0.08 ≈ 8% keeps pixels faintly on at the low point.
-		const minDuty = 0.08
-
-		// Breathing speed (seconds per full cycle). Adjust to taste.
 		const secondsPerCycle = 12.0
-		// Angular speed for sine wave
+		const minDuty = 0.10 // 10% base so it never “looks off”
 		omega := 2 * math.Pi / secondsPerCycle
-
 		start := time.Now()
+
 		for {
 			select {
 			case <-breathingStopChan:
@@ -223,14 +263,13 @@ func RunBreathingEffect() {
 				return
 
 			case now := <-ticker.C:
-				// 0..1 wave using sin, eased by squaring for nicer low-end time
 				elapsed := now.Sub(start).Seconds()
-				phase := (math.Sin(omega*elapsed) + 1.0) / 2.0 // 0..1
-				// apply perceptual easing + clamp floor
-				phase = phase * phase // bias toward low end for a softer feel
+				// 0..1 sine wave, eased near the bottom for nicer linger
+				phase := (math.Sin(omega*elapsed) + 1.0) / 2.0
+				phase = phase * phase
 				brightness := minDuty + (1.0-minDuty)*phase
 
-				col := scaleColorWithFloor(baseColor, brightness, 1) // floorLSB=1
+				col := scaleColorWithFloor(baseColor, brightness, floor)
 				setAllLEDs(col)
 			}
 		}
