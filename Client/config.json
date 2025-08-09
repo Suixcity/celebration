@@ -1,5 +1,11 @@
 {
-    "ledPin": 18,
-    "ledCount": 300,
-    "brightness": 255
+  "ledPin": 18,
+  "ledCount": 300,
+  "brightness": 80,
+
+  "events": {
+    "deal_won":        { "effect": "rainbow", "color": "#00ffaa", "cycles": 1 },
+    "account_created": { "effect": "wipe",    "color": "#00ff00", "cycles": 2 },
+    "celebrate":       { "effect": "blink",   "color": "#00ff00", "cycles": 3 }
+  }
 }

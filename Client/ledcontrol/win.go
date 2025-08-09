@@ -774,3 +774,76 @@ func rainbowCycle(delay time.Duration) {
 		time.Sleep(delay)
 	}
 }
+
+// =========================
+// EFFECT DISPATCHER (append)
+// =========================
+
+// RunEffectByName calls your existing effects by name. Add cases as you create more.
+func RunEffectByName(effect string, color uint32, cycles int) {
+	switch effect {
+	// ---- Call your existing named effects (these do their own Init/Cleanup) ----
+	case "celebrate_legacy":
+		// Uses your existing BlinkLEDs() → celebrateAnimation()
+		BlinkLEDs()
+		return
+
+	// If you have a custom function already defined, wire it here:
+	// case "stacked_shooting":
+	// 	StackedShooting()
+	// 	return
+	// case "knight_rider":
+	// 	KnightRider()
+	// 	return
+
+	// ---- Generic managed effects (safe wrappers; no conflict with your code) ----
+	case "blink":
+		runWithDevice(func() {
+			if cycles <= 0 {
+				cycles = 3
+			}
+			for c := 0; c < cycles; c++ {
+				fill(color)
+				dev.Render()
+				time.Sleep(500 * time.Millisecond)
+				ClearLEDs()
+				time.Sleep(250 * time.Millisecond)
+			}
+		})
+
+	case "wipe":
+		runWithDevice(func() {
+			if cycles <= 0 {
+				cycles = 1
+			}
+			for c := 0; c < cycles; c++ {
+				colorWipe(color, 5*time.Millisecond)
+				time.Sleep(200 * time.Millisecond)
+				ClearLEDs()
+			}
+		})
+
+	case "rainbow":
+		runWithDevice(func() {
+			if cycles <= 0 {
+				cycles = 1
+			}
+			for c := 0; c < cycles; c++ {
+				rainbowCycle(2 * time.Millisecond)
+			}
+		})
+
+	default:
+		// Unknown name → fallback to your existing animation
+		BlinkLEDs()
+	}
+}
+
+// runWithDevice wraps short effects that need direct LED access.
+func runWithDevice(run func()) {
+	if err := InitLEDs(); err != nil {
+		log.Fatal(err)
+	}
+	defer ClearLEDs()
+	run()
+}
