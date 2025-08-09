@@ -39,7 +39,6 @@ func connectToWebSocket() {
 
 func handleMessages(c *websocket.Conn) {
 	defer c.Close()
-
 	for {
 		_, message, err := c.ReadMessage()
 		if err != nil {
@@ -47,9 +46,33 @@ func handleMessages(c *websocket.Conn) {
 			break
 		}
 
-		if string(message) == "celebrate" {
-			log.Println("🎉 Celebration Triggered!")
+		msg := string(message)
+		switch msg {
+		case "account_created":
+			log.Println("📩 Account created → Celebration animation")
 			ledcontrol.BlinkLEDs()
+
+		case "deal_created":
+			log.Println("📩 Deal created → Shoot animation")
+			ledcontrol.ShootBounceLEDs(
+				0xFF0000,            // RGB cycle
+				8,                   // tail
+				12*time.Millisecond, // frameDelay
+				1,                   // Bounces
+			)
+		case "deal_won":
+			log.Println("📩 Deal won → Stacked Shoot")
+			ledcontrol.DealWonStackedShootHalfTrigger(
+				[]uint32{0xFF0000, 0x0000FF, 0x00FF00}, // palette
+				8,                                      // tail
+				12*time.Millisecond,                    // frameDelay
+				2,                                      // maxActive (2 shots at most)
+				3,                                      // blinkCount
+				180*time.Millisecond,                   // blinkPeriod
+			)
+
+		default:
+			log.Printf("📩 Unhandled message: %q\n", msg)
 		}
 	}
 }
