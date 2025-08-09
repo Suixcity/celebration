@@ -48,11 +48,11 @@ func handleMessages(c *websocket.Conn) {
 
 		msg := string(message)
 		switch msg {
-		case "account_create", "account_created", "celebrate": // keep old compatibility
+		case "account_created":
 			log.Println("📩 Account created → Celebration animation")
 			ledcontrol.BlinkLEDs()
 
-		case "deal_create", "deal_created", "shoot":
+		case "deal_created":
 			log.Println("📩 Deal created → Shoot animation")
 			ledcontrol.ShootLEDs()
 

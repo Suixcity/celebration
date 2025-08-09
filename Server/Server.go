@@ -23,11 +23,23 @@ func handleWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("Received Webhook: %v\n", data) // Debugging
+	log.Printf("Received Webhook: %v\n", data)
 
-	if event, ok := data["event"].(string); ok && event == "closed_won" {
-		log.Println("🎉 Deal Closed - Sending LED Trigger!")
-		broadcastMessage("celebrate")
+	if event, ok := data["event"].(string); ok {
+		switch event {
+		case "account_created":
+			log.Println("👤 Account Created - Sending animation")
+			broadcastMessage("account_created") // account animation
+
+		case "deal_created":
+			log.Println("💼 Deal Created - Sending animation")
+			broadcastMessage("deal_created") // deal animation
+
+		default:
+			http.Error(w, "Unknown event", http.StatusBadRequest)
+			return
+		}
+
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`{"status":"success","message":"LED triggered"}`))
 		return

@@ -145,11 +145,11 @@ func RunBreathingEffect() {
 
 						color := (rr << 16) | (gg << 8) | bb
 
-						// 🔍 LOG EVERYTHING
+						/* 🔍 LOG EVERYTHING
 						if int(t*1000)%3000 == 0 { // Log roughly every 3 seconds
 							log.Printf("t=%.2f phase=%.3f bright=%.3f RGB=(%d,%d,%d) color=0x%06X",
 								t, phase, brightness, rr, gg, bb, color)
-						}
+						}*/
 
 						for i := 0; i < config.LedCount && i < len(leds); i++ {
 							leds[i] = color
@@ -296,4 +296,3 @@ func min(a, b int) int {
 	}
 	return b
 }
-
