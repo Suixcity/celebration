@@ -3,9 +3,15 @@
   "ledCount": 300,
   "brightness": 80,
 
+  "idle": {
+    "effect": "breath",
+    "color": "#0000FF",
+    "cycles": 0
+  },
+
   "events": {
-    "deal_won":        { "effect": "rainbow", "color": "#00ffaa", "cycles": 1 },
-    "account_created": { "effect": "wipe",    "color": "#00ff00", "cycles": 2 },
-    "celebrate":       { "effect": "blink",   "color": "#00ff00", "cycles": 3 }
+    "deal_won":        { "effect": "blink",  "color": "#00FF00", "cycles": 3 },
+    "account_created": { "effect": "wipe",   "color": "#00FFAA", "cycles": 2 },
+    "celebrate":       { "effect": "blink",  "color": "#FF7F00", "cycles": 1 }
   }
 }
