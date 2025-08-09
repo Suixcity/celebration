@@ -210,3 +210,90 @@ func BlinkLEDs() {
 		RunBreathingEffect()
 	}()
 }
+
+// ShootLEDs runs a single "comet" that shoots down the strip with a fading tail,
+// then returns to the breathing effect (like BlinkLEDs does).
+func ShootLEDs() {
+	log.Println("🚀 Shoot effect triggered")
+	StopBreathingEffect()
+
+	done := make(chan struct{})
+	go shootAnimation(colorBlue, 8, 20*time.Millisecond, done)
+
+	go func() {
+		<-done
+		RunBreathingEffect()
+	}()
+}
+
+// shootAnimation animates a bright head with a fading tail from 0..LedCount-1.
+func shootAnimation(headColor uint32, tail int, frameDelay time.Duration, done chan struct{}) {
+	// safety: tail >= 1
+	if tail < 1 {
+		tail = 1
+	}
+
+	// inclusive travel past the end so the tail fully clears
+	totalSteps := config.LedCount + tail
+
+	for step := 0; step < totalSteps; step++ {
+		ledMutex.Lock()
+		if dev == nil {
+			ledMutex.Unlock()
+			time.Sleep(frameDelay)
+			continue
+		}
+		leds := dev.Leds(0)
+		if len(leds) == 0 {
+			ledMutex.Unlock()
+			time.Sleep(frameDelay)
+			continue
+		}
+
+		// clear frame
+		max := min(config.LedCount, len(leds))
+		for i := 0; i < max; i++ {
+			leds[i] = colorOff
+		}
+
+		// draw head + tail
+		for t := 0; t < tail; t++ {
+			pos := step - t
+			if pos < 0 || pos >= max {
+				continue
+			}
+			// fade from 1.0 (head) down to ~0
+			factor := 1.0 - (float64(t) / float64(tail))
+			leds[pos] = fadeColor(headColor, factor)
+		}
+
+		dev.Render()
+		ledMutex.Unlock()
+		time.Sleep(frameDelay)
+	}
+
+	ClearLEDs()
+	close(done)
+}
+
+// fadeColor scales a 0xRRGGBB color by [0..1].
+func fadeColor(col uint32, factor float64) uint32 {
+	if factor <= 0 {
+		return colorOff
+	}
+	if factor > 1 {
+		factor = 1
+	}
+	r := uint32(float64((col>>16)&0xFF) * factor)
+	g := uint32(float64((col>>8)&0xFF) * factor)
+	b := uint32(float64(col&0xFF) * factor)
+	return (r << 16) | (g << 8) | b
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
