@@ -57,7 +57,15 @@ func handleMessages(c *websocket.Conn) {
 			ledcontrol.ShootLEDs()
 		case "deal_won":
 			log.Println("📩 Deal won → Stacked Shoot")
-			ledcontrol.DealWonStackedShoot()
+			ledcontrol.DealWonStackedShootConcurrent(
+				[]uint32{0xFF0000, 0x0000FF, 0x00FF00}, // RGB cycle
+				8,                                      // tail
+				12*time.Millisecond,                    // frameDelay
+				90*time.Millisecond,                    // launchInterval (overlap)
+				2,                                      // maxActive shots
+				3,                                      // blinkCount
+				180*time.Millisecond,                   // blink period
+			)
 
 		default:
 			log.Printf("📩 Unhandled message: %q\n", msg)

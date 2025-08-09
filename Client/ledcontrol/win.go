@@ -226,6 +226,74 @@ func ShootLEDs() {
 	}()
 }
 
+// ShootBounceLEDs: comet bounces 0→end→0 with fading tail, N bounces, then resumes breathing.
+func ShootBounceLEDs(headColor uint32, tail int, frameDelay time.Duration, bounces int) {
+	log.Println("🏓 Shoot bounce")
+	StopBreathingEffect()
+
+	if tail < 1 {
+		tail = 1
+	}
+	if bounces < 1 {
+		bounces = 1
+	}
+
+	done := make(chan struct{})
+	go func() {
+		n := config.LedCount
+		head := 0
+		dir := 1 // +1 forward, -1 backward
+		b := 0
+
+		for {
+			ledMutex.Lock()
+			if dev != nil {
+				leds := dev.Leds(0)
+				max := min(n, len(leds))
+				// clear frame
+				for i := 0; i < max; i++ {
+					leds[i] = colorOff
+				}
+
+				// draw head + tail
+				for t := 0; t < tail; t++ {
+					pos := head - t*dir // tail follows along direction
+					if pos >= 0 && pos < max {
+						f := 1.0 - float64(t)/float64(tail)
+						leds[pos] = fadeColor(headColor, f)
+					}
+				}
+				dev.Render()
+			}
+			ledMutex.Unlock()
+			time.Sleep(frameDelay)
+
+			// advance
+			head += dir
+			if head <= 0 {
+				head = 0
+				dir = +1
+				b++
+			} else if head >= n-1 {
+				head = n - 1
+				dir = -1
+				b++
+			}
+			if b >= bounces*2 { // each touch counts
+				break
+			}
+		}
+
+		ClearLEDs()
+		close(done)
+	}()
+
+	go func() {
+		<-done
+		RunBreathingEffect()
+	}()
+}
+
 // shootAnimation animates a bright head with a fading tail from 0..LedCount-1.
 func shootAnimation(headColor uint32, tail int, frameDelay time.Duration, done chan struct{}) {
 	// safety: tail >= 1
@@ -306,9 +374,9 @@ func DealWonStackedShoot() {
 	done := make(chan struct{})
 	go shootStackedAnimation(
 		[]uint32{colorRed, colorBlue, colorGreen}, // alternating shot colors
-		8,                                        // tail length
-		15*time.Millisecond,                      // speed
-		3,                                        // blinks at the end
+		8,                   // tail length
+		15*time.Millisecond, // speed
+		3,                   // blinks at the end
 		done,
 	)
 
@@ -396,6 +464,151 @@ func shootStackedAnimation(colors []uint32, tail int, frameDelay time.Duration, 
 
 	ClearLEDs()
 	close(done)
+}
+
+// DealWonStackedShootConcurrent: stacks shots from END backward; launches new shots at a short interval
+// (allowing overlap), uses each section's own color to blink at the end, then resumes breathing.
+func DealWonStackedShootConcurrent(palette []uint32, tail int, frameDelay, launchInterval time.Duration, maxActive int, blinkCount int, blinkPeriod time.Duration) {
+	log.Println("🏁 Deal Won → stacked (overlapping) shots")
+	StopBreathingEffect()
+
+	if tail < 1 {
+		tail = 1
+	}
+	if maxActive < 1 {
+		maxActive = 1
+	}
+	if len(palette) == 0 {
+		palette = []uint32{colorRed, colorBlue, colorGreen}
+	}
+
+	type shot struct {
+		color uint32
+		step  int
+	}
+
+	done := make(chan struct{})
+	go func() {
+		n := config.LedCount
+		persist := make([]uint32, n) // filled area colors
+		filledStart := n             // [filledStart..n-1] is filled
+		colorIdx := 0
+
+		var active []shot
+		lastLaunch := time.Now().Add(-launchInterval) // force immediate first launch
+
+		for filledStart > 0 || len(active) > 0 {
+			// Launch new shots while allowed, in the unfilled region
+			for len(active) < maxActive && filledStart > 0 && time.Since(lastLaunch) >= launchInterval {
+				active = append(active, shot{color: palette[colorIdx%len(palette)], step: 0})
+				colorIdx++
+				lastLaunch = time.Now()
+			}
+
+			// Render frame
+			ledMutex.Lock()
+			if dev != nil {
+				leds := dev.Leds(0)
+				max := min(n, len(leds))
+
+				// base = persist (filled end)
+				for i := 0; i < max; i++ {
+					leds[i] = persist[i]
+				}
+
+				// draw each active shot head+tail within UNFILLED region [0..filledStart-1]
+				for si := range active {
+					for t := 0; t < tail; t++ {
+						pos := active[si].step - t
+						if pos < 0 || pos >= filledStart || pos >= max {
+							continue
+						}
+						f := 1.0 - float64(t)/float64(tail)
+						leds[pos] = fadeColor(active[si].color, f)
+					}
+				}
+				dev.Render()
+			}
+			ledMutex.Unlock()
+			time.Sleep(frameDelay)
+
+			// Advance steps & collect finished shots that reached the end (past unfilled)
+			finished := 0
+			for i := range active {
+				active[i].step++
+				if active[i].step >= filledStart+tail {
+					finished++
+				}
+			}
+
+			// Commit finished shots (one LED "chunk" per shot) into persist at the END
+			if finished > 0 {
+				newActive := active[:0]
+				for _, sh := range active {
+					if sh.step >= filledStart+tail {
+						// commit this shot
+						chunk := min(tail, filledStart)
+						for i := 0; i < chunk; i++ {
+							persist[filledStart-1-i] = sh.color
+						}
+						filledStart -= chunk
+					} else {
+						newActive = append(newActive, sh)
+					}
+				}
+				active = newActive
+			}
+		}
+
+		// Show the fully filled bar once
+		ledMutex.Lock()
+		if dev != nil {
+			leds := dev.Leds(0)
+			max := min(n, len(leds))
+			for i := 0; i < max; i++ {
+				leds[i] = persist[i]
+			}
+			dev.Render()
+		}
+		ledMutex.Unlock()
+
+		// Blink using each LED's own stacked color (not white)
+		for b := 0; b < blinkCount; b++ {
+			// OFF
+			ledMutex.Lock()
+			if dev != nil {
+				leds := dev.Leds(0)
+				max := min(n, len(leds))
+				for i := 0; i < max; i++ {
+					leds[i] = colorOff
+				}
+				dev.Render()
+			}
+			ledMutex.Unlock()
+			time.Sleep(blinkPeriod)
+
+			// ON with persist colors
+			ledMutex.Lock()
+			if dev != nil {
+				leds := dev.Leds(0)
+				max := min(n, len(leds))
+				for i := 0; i < max; i++ {
+					leds[i] = persist[i]
+				}
+				dev.Render()
+			}
+			ledMutex.Unlock()
+			time.Sleep(blinkPeriod)
+		}
+
+		ClearLEDs()
+		close(done)
+	}()
+
+	go func() {
+		<-done
+		RunBreathingEffect()
+	}()
 }
 
 func blinkStrip(times int, onColor uint32, period time.Duration) {
