@@ -62,14 +62,13 @@ func handleMessages(c *websocket.Conn) {
 			)
 		case "deal_won":
 			log.Println("📩 Deal won → Stacked Shoot")
-			ledcontrol.DealWonStackedShootConcurrent(
-				[]uint32{0xFF0000, 0x0000FF, 0x00FF00}, // RGB cycle
+			ledcontrol.DealWonStackedShootHalfTrigger(
+				[]uint32{0xFF0000, 0x0000FF, 0x00FF00}, // palette
 				8,                                      // tail
 				12*time.Millisecond,                    // frameDelay
-				90*time.Millisecond,                    // launchInterval (overlap)
-				2,                                      // maxActive shots
+				2,                                      // maxActive (2 shots at most)
 				3,                                      // blinkCount
-				180*time.Millisecond,                   // blink period
+				180*time.Millisecond,                   // blinkPeriod
 			)
 
 		default:

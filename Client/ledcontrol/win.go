@@ -466,17 +466,19 @@ func shootStackedAnimation(colors []uint32, tail int, frameDelay time.Duration, 
 	close(done)
 }
 
-// DealWonStackedShootConcurrent: stacks shots from END backward with evenly spaced heads.
-// spacingLEDs is derived from launchInterval/frameDelay so changing interval keeps spacing coherent.
-func DealWonStackedShootConcurrent(
+// DealWonStackedShootHalfTrigger stacks shots from the END backward.
+// A new shot launches whenever the leading shot reaches halfway through
+// the *current unfilled region*. Colors alternate from the given palette.
+// Ends with color-matched blinking, then resumes breathing.
+func DealWonStackedShootHalfTrigger(
 	palette []uint32,
 	tail int,
-	frameDelay, launchInterval time.Duration,
+	frameDelay time.Duration,
 	maxActive int,
 	blinkCount int,
 	blinkPeriod time.Duration,
 ) {
-	log.Println("🏁 Deal Won → stacked shots (even spacing)")
+	log.Println("🏁 Deal Won → stacked shots (halfway-triggered)")
 	StopBreathingEffect()
 
 	if tail < 1 {
@@ -491,53 +493,52 @@ func DealWonStackedShootConcurrent(
 
 	type shot struct {
 		color uint32
-		step  int // head position; advances +1 per frame
+		step  int // head position in "frames" (1 LED per frame)
 	}
 
 	done := make(chan struct{})
 	go func() {
 		n := config.LedCount
-		persist := make([]uint32, n)
-		filledStart := n
+		persist := make([]uint32, n) // filled end-region colors
+		filledStart := n             // unfilled = [0..filledStart-1]
 		colorIdx := 0
 
 		var active []shot
-		lastLaunch := time.Now().Add(-launchInterval)
+		// seed first shot immediately at the start of the unfilled region
+		active = append(active, shot{color: palette[colorIdx%len(palette)], step: 0})
+		colorIdx++
 
-		// Convert interval→spacing (LEDs) so heads stay evenly spaced
-		spacingLEDs := int((launchInterval + frameDelay/2) / frameDelay)
-		if spacingLEDs < 1 {
-			spacingLEDs = 1
-		}
+		// control flag to avoid multiple spawns before the lead crosses a *new* halfway point
+		launchedForThisHalfSegment := false
 
 		for filledStart > 0 || len(active) > 0 {
-			// Launch new shots at fixed spacing (by initial step), gated by interval & capacity
-			for len(active) < maxActive && filledStart > 0 && time.Since(lastLaunch) >= launchInterval {
-				active = append(active, shot{
-					color: palette[colorIdx%len(palette)],
-					step:  -spacingLEDs, // enters the strip with a fixed head spacing
-				})
-				colorIdx++
-				lastLaunch = time.Now()
-			}
-
-			// --- Render frame (base = persist, then draw each active shot only in unfilled region)
+			// ---- RENDER (nearest-head priority so shots don't visually merge)
 			ledMutex.Lock()
 			if dev != nil {
 				leds := dev.Leds(0)
 				max := min(n, len(leds))
+				// base = persist (already filled end)
 				for i := 0; i < max; i++ {
 					leds[i] = persist[i]
-				} // base: already filled tail region
+				}
 
+				// composite active shots into unfilled region
+				const big = 1 << 30
+				bestT := make([]int, max)
+				for i := 0; i < max; i++ {
+					bestT[i] = big
+				}
 				for si := range active {
 					for t := 0; t < tail; t++ {
 						pos := active[si].step - t
 						if pos < 0 || pos >= filledStart || pos >= max {
 							continue
 						}
-						f := 1.0 - float64(t)/float64(tail)
-						leds[pos] = fadeColor(active[si].color, f)
+						if t < bestT[pos] {
+							bestT[pos] = t
+							f := 1.0 - float64(t)/float64(tail)
+							leds[pos] = fadeColor(active[si].color, f)
+						}
 					}
 				}
 				dev.Render()
@@ -545,34 +546,75 @@ func DealWonStackedShootConcurrent(
 			ledMutex.Unlock()
 			time.Sleep(frameDelay)
 
-			// Advance heads; collect those that ran through the unfilled region
-			finished := 0
+			// ---- ADVANCE heads
 			for i := range active {
 				active[i].step++
-				if active[i].step >= filledStart+tail {
-					finished++
+			}
+
+			// ---- EVENT-DRIVEN LAUNCH:
+			// If the *leading* head (max step) has reached halfway through the current unfilled region,
+			// and capacity allows, launch a new shot at the start (step=0).
+			if len(active) > 0 && len(active) < maxActive && filledStart > 0 {
+				// leading head = max step among active
+				lead := active[0].step
+				for i := 1; i < len(active); i++ {
+					if active[i].step > lead {
+						lead = active[i].step
+					}
+				}
+				half := filledStart / 2
+				if lead >= half && !launchedForThisHalfSegment {
+					active = append(active, shot{
+						color: palette[colorIdx%len(palette)],
+						step:  0,
+					})
+					colorIdx++
+					launchedForThisHalfSegment = true
 				}
 			}
 
-			// Commit finished shots: add a tail-sized chunk at the END (growing backward)
-			if finished > 0 {
+			// ---- COLLECT finished shots and COMMIT chunks to the end
+			finishedCount := 0
+			for i := range active {
+				if active[i].step >= filledStart+tail { // fully passed unfilled region + tail
+					finishedCount++
+				}
+			}
+			if finishedCount > 0 {
 				next := active[:0]
+				// Commit in an alternating palette sequence so adjacent chunks differ
+				nextCommitColorIdx := 0
 				for _, sh := range active {
 					if sh.step >= filledStart+tail {
 						chunk := min(tail, filledStart)
-						for i := 0; i < chunk; i++ {
-							persist[filledStart-1-i] = sh.color
+						c := palette[(colorIdx+nextCommitColorIdx)%len(palette)]
+						// avoid same-as-last color at the boundary
+						if filledStart < n && c == persist[filledStart] {
+							nextCommitColorIdx++
+							c = palette[(colorIdx+nextCommitColorIdx)%len(palette)]
+						}
+						for j := 0; j < chunk; j++ {
+							persist[filledStart-1-j] = c
 						}
 						filledStart -= chunk
+						nextCommitColorIdx++
 					} else {
 						next = append(next, sh)
 					}
 				}
 				active = next
+
+				// unfilled region changed → reset the halfway launch gate
+				launchedForThisHalfSegment = false
+
+				// If region just became empty, break after we show/blink below
+				if filledStart <= 0 && len(active) == 0 {
+					// fall through to end
+				}
 			}
 		}
 
-		// Show full strip once, then blink using each LED's stacked color
+		// Show full strip once, then blink using each LED's stacked color (color-matched blink)
 		ledMutex.Lock()
 		if dev != nil {
 			leds := dev.Leds(0)
@@ -598,7 +640,7 @@ func DealWonStackedShootConcurrent(
 			ledMutex.Unlock()
 			time.Sleep(blinkPeriod)
 
-			// ON with stacked colors (color-matched blink)
+			// ON (persist colors)
 			ledMutex.Lock()
 			if dev != nil {
 				leds := dev.Leds(0)
