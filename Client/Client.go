@@ -189,7 +189,10 @@ func resolvePrefs(msg WSMessage) (effect string, color uint32, cycles int) {
 
 // ---------- WebSocket client ----------
 func connectToWebSocket() {
-	ident, err := loadIdent()
+	// set your deployed URLs
+	const wsURL = "wss://webhook-listener-2i7r.onrender.com/ws"
+
+	ident, err := loadIdent() // reads client.json {deviceId, deviceSecret}
 	if err != nil {
 		log.Fatalf("identity error: %v", err)
 	}
@@ -201,14 +204,25 @@ func connectToWebSocket() {
 			"X-Auth-Ts":   []string{ts},
 			"X-Auth-Sig":  []string{sign(ident.DeviceID, ident.DeviceSecret, ts)},
 		}
-		c, _, err := websocket.DefaultDialer.Dial(wsURL, hdr)
+
+		d := *websocket.DefaultDialer
+		c, resp, err := d.Dial(wsURL, hdr)
 		if err != nil {
-			log.Println("WS connect failed, retrying in 5s...", err)
+			// Print server’s actual response to see why the handshake failed
+			if resp != nil {
+				body, _ := io.ReadAll(resp.Body)
+				_ = resp.Body.Close()
+				log.Printf("WS connect failed (%s): HTTP %d %s body=%q", wsURL, resp.StatusCode, resp.Status, string(body))
+			} else {
+				log.Printf("WS connect failed: %v", err)
+			}
 			time.Sleep(5 * time.Second)
 			continue
 		}
+
 		log.Println("Connected to WebSocket server as", ident.DeviceID)
 		handleMessages(c, ident)
+		// handleMessages returns on disconnect; loop will retry
 	}
 }
 
