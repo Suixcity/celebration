@@ -69,6 +69,7 @@ var (
 	devices    = map[string]Device{}
 	wsMu       sync.Mutex
 	wsByDevice = map[string]map[*websocket.Conn]struct{}{}
+	adminKey   string
 )
 
 // ---------- Main ----------
@@ -136,15 +137,24 @@ func secureCompare(a, b string) bool {
 	return hmac.Equal(aa, bb)
 }
 
+func init() {
+	data, err := os.ReadFile("/etc/secrets/admin_key.txt")
+	if err != nil {
+		log.Fatalf("failed to read admin key: %v", err)
+	}
+	adminKey = strings.TrimSpace(string(data))
+}
+
 // Single admin middleware: header X-Admin-Key must match env ADMIN_API_KEY.
+
 func adminOnly(next http.Handler) http.Handler {
-	required := os.Getenv("ADMIN_API_KEY")
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if required == "" {
+		if adminKey == "" {
 			http.Error(w, "admin key not configured", http.StatusForbidden)
 			return
 		}
-		if !secureCompare(r.Header.Get("X-Admin-Key"), required) {
+		got := r.Header.Get("X-Admin-Key")
+		if !secureCompare(got, adminKey) {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
