@@ -72,6 +72,9 @@ func main() {
 		r.Get("/prefs", handleGetPrefs)
 		r.Put("/prefs", handlePutPrefs)
 		r.Post("/notify-config", handleNotifyConfig) // push “config_updated”
+		// protected writes
+		r.With(requireAdminMW).Put("/prefs", handlePutPrefs)
+		r.With(requireAdminMW).Post("/notify-config", handleNotifyConfig)
 	})
 
 	r.Get("/ws", handleWS)
@@ -381,4 +384,19 @@ func handleNotifyConfig(w http.ResponseWriter, r *http.Request) {
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+// middleware
+func requireAdminMW(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		want := os.Getenv("ADMIN_KEY")
+		if want != "" { // only enforce if set
+			got := r.Header.Get("X-Admin-Key")
+			if got != want {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
 }
