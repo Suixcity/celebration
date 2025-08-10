@@ -457,6 +457,7 @@ func shootAnimation(headColor uint32, tail int, frameDelay time.Duration, done c
 // ======================
 //
 
+// DealWonStackedShoot triggers the stacked comet+fill effect.
 func DealWonStackedShoot() {
 	log.Println("🏁 Deal Won → Stacked Shoot")
 
@@ -467,16 +468,21 @@ func DealWonStackedShoot() {
 
 	done := make(chan struct{})
 	go shootStackedAnimation(
-		[]uint32{colorRed, colorBlue, colorGreen},
-		8,
-		15*time.Millisecond,
-		3,
+		[]uint32{colorRed, colorBlue, colorGreen}, // rotate through these
+		8,                   // tail length
+		15*time.Millisecond, // frame delay
+		3,                   // blinks to use
 		done,
 	)
 
 	<-done
 }
 
+// shootStackedAnimation fills the strip from the END backwards using repeated
+// “comet” passes. It now:
+//   - fires a blink once when the comet head crosses the halfway point (n/2),
+//   - blinks using the *current shotColor* (not white),
+//   - ends with a blink in the final color (optional; easy to tweak/remove).
 func shootStackedAnimation(colors []uint32, tail int, frameDelay time.Duration, blinks int, done chan struct{}) {
 	if tail < 1 {
 		tail = 1
@@ -492,6 +498,10 @@ func shootStackedAnimation(colors []uint32, tail int, frameDelay time.Duration, 
 	filledStart := n // unfilled = [0..filledStart-1]
 	colorIdx := 0
 
+	// fire only once at the exact halfway crossing
+	halfFired := false
+	halfIndex := n / 2
+
 	for filledStart > 0 {
 		shotColor := colors[colorIdx%len(colors)]
 		colorIdx++
@@ -502,24 +512,63 @@ func shootStackedAnimation(colors []uint32, tail int, frameDelay time.Duration, 
 			if dev != nil {
 				leds := dev.Leds(0)
 				max := min(n, len(leds))
+
+				// draw background (what's already "stuck" on the right)
 				for i := 0; i < max; i++ {
 					leds[i] = persist[i]
 				}
+
+				// draw head + tail within the unfilled left region
+				// head position "pos" runs from 0 up to filledStart-1
+				headPos := -1
 				for t := 0; t < tail; t++ {
 					pos := step - t
 					if pos < 0 || pos >= filledStart || pos >= max {
 						continue
 					}
+					if headPos == -1 {
+						headPos = pos // first valid t => head
+					}
 					f := 1.0 - float64(t)/float64(tail)
 					leds[pos] = fadeColor(shotColor, f)
 				}
-				dev.Render()
+
+				// trigger the halfway blink exactly once when the HEAD crosses n/2
+				if !halfFired && headPos >= 0 && headPos == halfIndex {
+					dev.Render()
+					ledMutex.Unlock()
+
+					blinkStrip(blinks, shotColor, 220*time.Millisecond)
+
+					ledMutex.Lock()
+					// redraw current frame after blink (so animation continues smoothly)
+					if dev != nil {
+						leds = dev.Leds(0)
+						max = min(n, len(leds))
+						for i := 0; i < max; i++ {
+							leds[i] = persist[i]
+						}
+						for t := 0; t < tail; t++ {
+							pos := step - t
+							if pos < 0 || pos >= filledStart || pos >= max {
+								continue
+							}
+							f := 1.0 - float64(t)/float64(tail)
+							leds[pos] = fadeColor(shotColor, f)
+						}
+					}
+					halfFired = true
+				}
+
+				if dev != nil {
+					dev.Render()
+				}
 			}
 			ledMutex.Unlock()
 			time.Sleep(frameDelay)
 		}
 
-		// commit chunk to end
+		// commit a “chunk” of the comet’s tail onto the right end
 		chunk := min(tail, filledStart)
 		for i := 0; i < chunk; i++ {
 			persist[filledStart-1-i] = shotColor
@@ -527,7 +576,7 @@ func shootStackedAnimation(colors []uint32, tail int, frameDelay time.Duration, 
 		filledStart -= chunk
 	}
 
-	// show full
+	// show final filled strip
 	ledMutex.Lock()
 	if dev != nil {
 		leds := dev.Leds(0)
@@ -539,8 +588,10 @@ func shootStackedAnimation(colors []uint32, tail int, frameDelay time.Duration, 
 	}
 	ledMutex.Unlock()
 
-	// blink
-	blinkStrip(blinks, 0xFFFFFF, 220*time.Millisecond)
+	// Optional: blink at the end using the final segment's color (not white).
+	// If you don’t want this blink, just delete these two lines.
+	finalColor := persist[n-1]
+	blinkStrip(blinks, finalColor, 220*time.Millisecond)
 
 	ClearLEDs()
 	close(done)
@@ -572,6 +623,7 @@ func min(a, b int) int {
 	return b
 }
 
+// blinkStrip blinks the whole strip with a color for a period, 'times' times.
 func blinkStrip(times int, onColor uint32, period time.Duration) {
 	for i := 0; i < times; i++ {
 		ledMutex.Lock()
