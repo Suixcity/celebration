@@ -493,60 +493,106 @@ func shootStackedAnimation(colors []uint32, tail int, frameDelay time.Duration, 
 		return
 	}
 
-	// persistent fill region at END
+	// Filled (persist) lives at the END of the strip.
 	persist := make([]uint32, n)
-	filledStart := n // unfilled = [0..filledStart-1]
+	filledStart := n // unfilled window is [0..filledStart-1]
 	colorIdx := 0
 
-	for filledStart > 0 {
-		shotColor := colors[colorIdx%len(colors)]
-		colorIdx++
+	type shot struct {
+		head  int
+		color uint32
+	}
+	var shots []shot
 
-		// animate comet through unfilled region
-		for step := 0; step < filledStart+tail; step++ {
-			ledMutex.Lock()
-			if dev != nil {
-				leds := dev.Leds(0)
-				max := min(n, len(leds))
-				for i := 0; i < max; i++ {
-					leds[i] = persist[i]
-				}
+	// Clean slate so we don't “flash” at the beginning.
+	ClearLEDs()
+
+	// Seed first shot.
+	shots = append(shots, shot{head: 0, color: colors[colorIdx%len(colors)]})
+	colorIdx++
+
+	for filledStart > 0 {
+		// ----- draw frame -----
+		ledMutex.Lock()
+		if dev != nil {
+			leds := dev.Leds(0)
+			max := min(n, len(leds))
+
+			// Base = persist (already committed segments at the end)
+			for i := 0; i < max; i++ {
+				leds[i] = persist[i]
+			}
+
+			// Overlay all active shots into the current unfilled window
+			for _, s := range shots {
 				for t := 0; t < tail; t++ {
-					pos := step - t
+					pos := s.head - t
 					if pos < 0 || pos >= filledStart || pos >= max {
 						continue
 					}
 					f := 1.0 - float64(t)/float64(tail)
-					leds[pos] = fadeColor(shotColor, f)
+					leds[pos] = fadeColor(s.color, f)
 				}
-				dev.Render()
 			}
-			ledMutex.Unlock()
-			time.Sleep(frameDelay)
+			dev.Render()
+		}
+		ledMutex.Unlock()
+
+		time.Sleep(frameDelay)
+
+		// ----- advance shots -----
+		for i := range shots {
+			shots[i].head++
 		}
 
-		// commit chunk to end
-		chunk := min(tail, filledStart)
-		for i := 0; i < chunk; i++ {
-			persist[filledStart-1-i] = shotColor
+		// If the leading shot reached the boundary, commit a chunk of 'tail' to the end.
+		if len(shots) > 0 && shots[0].head >= filledStart {
+			chunk := min(tail, filledStart)
+			for i := 0; i < chunk; i++ {
+				persist[filledStart-1-i] = shots[0].color
+			}
+			filledStart -= chunk
+			shots = shots[1:] // remove the one we just committed
 		}
-		filledStart -= chunk
+
+		// Spawn the next shot when the LAST active shot is halfway through the current unfilled window.
+		if filledStart > 0 {
+			half := filledStart / 2
+			if len(shots) == 0 || shots[len(shots)-1].head >= half {
+				shots = append(shots, shot{head: 0, color: colors[colorIdx%len(colors)]})
+				colorIdx++
+			}
+		}
 	}
 
-	// show full
-	ledMutex.Lock()
-	if dev != nil {
-		leds := dev.Leds(0)
-		max := min(n, len(leds))
-		for i := 0; i < max; i++ {
-			leds[i] = persist[i]
+	// Final: blink using the ACTUAL segment colors (not white)
+	for b := 0; b < blinks; b++ {
+		// ON (segment colors)
+		ledMutex.Lock()
+		if dev != nil {
+			leds := dev.Leds(0)
+			max := min(n, len(leds))
+			for i := 0; i < max; i++ {
+				leds[i] = persist[i]
+			}
+			dev.Render()
 		}
-		dev.Render()
-	}
-	ledMutex.Unlock()
+		ledMutex.Unlock()
+		time.Sleep(220 * time.Millisecond)
 
-	// blink
-	blinkStrip(blinks, 0xFFFFFF, 220*time.Millisecond)
+		// OFF
+		ledMutex.Lock()
+		if dev != nil {
+			leds := dev.Leds(0)
+			max := min(n, len(leds))
+			for i := 0; i < max; i++ {
+				leds[i] = colorOff
+			}
+			dev.Render()
+		}
+		ledMutex.Unlock()
+		time.Sleep(220 * time.Millisecond)
+	}
 
 	ClearLEDs()
 	close(done)
