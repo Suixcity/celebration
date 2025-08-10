@@ -1,13 +1,17 @@
 package main
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"celebration/ledcontrol"
@@ -15,134 +19,151 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-var serverURL = "wss://webhook-listener-2i7r.onrender.com/ws"
+var (
+	// Change these to wherever Server.go is running
+	apiBase = "https://webhook-listener-2i7r.onrender.com"
+	wsURL   = "wss://webhook-listener-2i7r.onrender.com/ws"
+)
 
-// ---------- Incoming WS message ----------
+// ---------- types ----------
 type WSMessage struct {
-	Type      string `json:"type"`      // e.g., "deal_won"
-	Effect    string `json:"effect"`    // optional override
-	ColorHex  string `json:"color"`     // optional override "#RRGGBB"
-	Cycles    int    `json:"cycles"`    // optional override
-	AccountID string `json:"accountId"` // optional
+	Type     string `json:"type"`
+	Effect   string `json:"effect"`
+	ColorHex string `json:"color"`
+	Cycles   int    `json:"cycles"`
 }
 
-// ---------- Device config (config.json) ----------
 type EffectPref struct {
 	Effect string `json:"effect"`
 	Color  string `json:"color"`
 	Cycles int    `json:"cycles"`
 }
 type IdlePref struct {
-	Effect string `json:"effect"` // "breath", "solid", "rainbow", etc. (must be supported by RunEffectByName)
+	Effect string `json:"effect"`
 	Color  string `json:"color"`
-	Cycles int    `json:"cycles"` // 0 or <1 = loop forever for non-breath idles
+	Cycles int    `json:"cycles"`
 }
-type DeviceConfig struct {
+type DevicePrefs struct {
 	Idle   IdlePref              `json:"idle"`
 	Events map[string]EffectPref `json:"events"`
 }
-
-var deviceCfg = DeviceConfig{Events: map[string]EffectPref{}}
-
-func cfgPath() string { return filepath.Join(".", "config.json") }
-
-func loadConfig() {
-	data, err := os.ReadFile(cfgPath())
-	if err != nil {
-		log.Printf("config.json not found (using no defaults): %v", err)
-		return
-	}
-	if err := json.Unmarshal(data, &deviceCfg); err != nil {
-		log.Printf("config.json invalid (ignored): %v", err)
-	}
+type ClientIdent struct {
+	DeviceID     string `json:"deviceId"`
+	DeviceSecret string `json:"deviceSecret"`
 }
 
-// ---------- Idle manager (runs whatever you put in config.json) ----------
+type effectJob struct {
+	effect string
+	color  uint32
+	cycles int
+}
+
 var (
-	idleMu      sync.Mutex
-	idleStopCh  chan struct{}
-	idleRunning bool
+	devicePrefs = DevicePrefs{Events: map[string]EffectPref{}}
+	jobs        = make(chan effectJob, 32) // serialize effects
 )
 
-// startIdle starts whichever idle effect is in config.json.
-// - If "breath": uses your RunBreathingEffect()/StopBreathingEffect() (continuous).
-// - Else: loops RunEffectByName(effect, color, cyclesOrDefault) in a goroutine.
-func startIdle() {
-	idleMu.Lock()
-	defer idleMu.Unlock()
-	if idleRunning {
-		return
+// ---------- identity & signing ----------
+func loadIdent() (ClientIdent, error) {
+	var id ClientIdent
+	b, err := os.ReadFile(filepath.Join(".", "client.json"))
+	if err != nil {
+		return id, err
 	}
-	effect := strings.ToLower(strings.TrimSpace(deviceCfg.Idle.Effect))
-	if effect == "" {
-		return
+	if err := json.Unmarshal(b, &id); err != nil {
+		return id, err
 	}
+	if strings.TrimSpace(id.DeviceID) == "" || strings.TrimSpace(id.DeviceSecret) == "" {
+		return id, fmt.Errorf("client.json missing deviceId or deviceSecret")
+	}
+	return id, nil
+}
+func sign(deviceID, secret, ts string) string {
+	m := hmac.New(sha256.New, []byte(secret))
+	m.Write([]byte(deviceID))
+	m.Write([]byte(":"))
+	m.Write([]byte(ts))
+	return hex.EncodeToString(m.Sum(nil))
+}
 
-	switch effect {
-	case "breath", "runbreathingeffect":
+// ---------- small utils ----------
+func parseHexColor(s string) uint32 {
+	s = strings.TrimPrefix(strings.TrimSpace(s), "#")
+	if len(s) != 6 {
+		return 0
+	}
+	var r, g, b uint32
+	if _, err := fmt.Sscanf(s, "%02x%02x%02x", &r, &g, &b); err != nil {
+		return 0
+	}
+	return (r << 16) | (g << 8) | b
+}
+func must[T any](v T, _ error) T { return v }
+
+// ---------- keep local config.json’s idle color in sync ----------
+func writeIdleColorIntoLocalConfig(hexColor string) {
+	type idleCfg struct {
+		Color string `json:"color"`
+	}
+	type conf struct {
+		LedPin     int     `json:"ledPin"`
+		LedCount   int     `json:"ledCount"`
+		Brightness int     `json:"brightness"`
+		Idle       idleCfg `json:"idle"`
+	}
+	var c conf
+	_ = json.Unmarshal(must(os.ReadFile("config.json")), &c)
+	if c.Idle.Color == hexColor {
+		return
+	}
+	c.Idle.Color = hexColor
+	_ = os.WriteFile("config.json", must(json.MarshalIndent(c, "", "  ")), 0644)
+	log.Printf("Updated local config.json idle.color to %s", hexColor)
+}
+
+// ---------- prefs fetch & apply ----------
+func fetchPrefs(deviceID string) {
+	url := fmt.Sprintf("%s/devices/%s/prefs", apiBase, deviceID)
+	res, err := http.Get(url)
+	if err != nil {
+		log.Printf("fetch prefs: %v", err)
+		return
+	}
+	defer res.Body.Close()
+	if res.StatusCode != 200 {
+		b, _ := io.ReadAll(res.Body)
+		log.Printf("fetch prefs status %d: %s", res.StatusCode, string(b))
+		return
+	}
+	var p DevicePrefs
+	if err := json.NewDecoder(res.Body).Decode(&p); err != nil {
+		log.Printf("prefs decode: %v", err)
+		return
+	}
+	devicePrefs = p
+
+	// Sync idle color for breathing effect (win.go reads config.json)
+	if p.Idle.Color != "" {
+		writeIdleColorIntoLocalConfig(p.Idle.Color)
+	}
+	// Restart idle to pick up new effect/color
+	ledcontrol.StopBreathingEffect()
+	if strings.ToLower(strings.TrimSpace(p.Idle.Effect)) == "breath" ||
+		strings.ToLower(strings.TrimSpace(p.Idle.Effect)) == "runbreathingeffect" {
 		ledcontrol.RunBreathingEffect()
-		idleRunning = true
-		// breathing stops via stopIdle() -> StopBreathingEffect()
-	default:
-		idleStopCh = make(chan struct{})
-		idleRunning = true
-		color := parseHexColor(deviceCfg.Idle.Color)
-
-		// For idle: if cycles < 1, we’ll loop forever.
-		idleCycles := deviceCfg.Idle.Cycles
-		if idleCycles < 1 {
-			idleCycles = 1 // RunEffectByName once per loop iteration
-		}
-
-		go func(name string, col uint32, cyc int) {
-			log.Printf("Idle loop start: %s color=%06X cycles=%d", name, col, cyc)
-			defer log.Printf("Idle loop exit: %s", name)
-
-			for {
-				select {
-				case <-idleStopCh:
-					return
-				default:
-				}
-				// Run the effect once; for "solid", your win.go should set and not clear.
-				ledcontrol.RunEffectByName(name, col, cyc)
-
-				// Small pause between loops for animated idles
-				select {
-				case <-idleStopCh:
-					return
-				case <-time.After(100 * time.Millisecond):
-				}
-			}
-		}(effect, color, idleCycles)
 	}
+	log.Printf("Applied prefs: idle=%s %s, %d events", p.Idle.Effect, p.Idle.Color, len(p.Events))
 }
 
-func stopIdle() {
-	idleMu.Lock()
-	defer idleMu.Unlock()
-	if !idleRunning {
-		return
-	}
-	effect := strings.ToLower(strings.TrimSpace(deviceCfg.Idle.Effect))
-	if effect == "breath" || effect == "runbreathingeffect" {
-		ledcontrol.StopBreathingEffect()
-	} else if idleStopCh != nil {
-		close(idleStopCh)
-		idleStopCh = nil
-	}
-	idleRunning = false
-}
-
-// ---------- Preferences resolution ----------
+// ---------- event resolution ----------
 func resolvePrefs(msg WSMessage) (effect string, color uint32, cycles int) {
-	// 1) start from device defaults
-	if p, ok := deviceCfg.Events[msg.Type]; ok {
+	// start from device prefs by event type
+	if p, ok := devicePrefs.Events[strings.ToLower(strings.TrimSpace(msg.Type))]; ok {
 		effect = strings.ToLower(strings.TrimSpace(p.Effect))
 		color = parseHexColor(p.Color)
 		cycles = p.Cycles
 	}
-	// 2) server overrides
+	// server overrides
 	if msg.Effect != "" {
 		effect = strings.ToLower(strings.TrimSpace(msg.Effect))
 	}
@@ -152,9 +173,10 @@ func resolvePrefs(msg WSMessage) (effect string, color uint32, cycles int) {
 	if msg.Cycles > 0 {
 		cycles = msg.Cycles
 	}
-	// 3) fallbacks
+
+	// fallbacks
 	if effect == "" {
-		effect = "celebrate_legacy" // calls your BlinkLEDs()
+		effect = "celebrate_legacy"
 	}
 	if color == 0 {
 		color = 0x00FF00
@@ -167,27 +189,50 @@ func resolvePrefs(msg WSMessage) (effect string, color uint32, cycles int) {
 
 // ---------- WebSocket client ----------
 func connectToWebSocket() {
+	// set your deployed URLs
+	const wsURL = "wss://webhook-listener-2i7r.onrender.com/ws"
+
+	ident, err := loadIdent() // reads client.json {deviceId, deviceSecret}
+	if err != nil {
+		log.Fatalf("identity error: %v", err)
+	}
+
 	for {
-		c, _, err := websocket.DefaultDialer.Dial(serverURL, nil)
+		ts := fmt.Sprintf("%d", time.Now().Unix())
+		hdr := http.Header{
+			"X-Device-ID": []string{ident.DeviceID},
+			"X-Auth-Ts":   []string{ts},
+			"X-Auth-Sig":  []string{sign(ident.DeviceID, ident.DeviceSecret, ts)},
+		}
+
+		d := *websocket.DefaultDialer
+		c, resp, err := d.Dial(wsURL, hdr)
 		if err != nil {
-			log.Println("Failed to connect to server, retrying in 5 seconds...")
+			// Print server’s actual response to see why the handshake failed
+			if resp != nil {
+				body, _ := io.ReadAll(resp.Body)
+				_ = resp.Body.Close()
+				log.Printf("WS connect failed (%s): HTTP %d %s body=%q", wsURL, resp.StatusCode, resp.Status, string(body))
+			} else {
+				log.Printf("WS connect failed: %v", err)
+			}
 			time.Sleep(5 * time.Second)
 			continue
 		}
-		log.Println("Connected to WebSocket server")
-		handleMessages(c)
+
+		log.Println("Connected to WebSocket server as", ident.DeviceID)
+		handleMessages(c, ident)
+		// handleMessages returns on disconnect; loop will retry
 	}
 }
 
-func handleMessages(c *websocket.Conn) {
+func handleMessages(c *websocket.Conn, ident ClientIdent) {
 	defer c.Close()
 
 	// keepalive
 	c.SetReadLimit(1 << 20)
 	_ = c.SetReadDeadline(time.Now().Add(60 * time.Second))
-	c.SetPongHandler(func(string) error {
-		return c.SetReadDeadline(time.Now().Add(60 * time.Second))
-	})
+	c.SetPongHandler(func(string) error { return c.SetReadDeadline(time.Now().Add(60 * time.Second)) })
 	go func() {
 		t := time.NewTicker(30 * time.Second)
 		defer t.Stop()
@@ -203,48 +248,61 @@ func handleMessages(c *websocket.Conn) {
 			return
 		}
 
-		// legacy: plain "celebrate"
-		if string(raw) == "celebrate" {
-			log.Println("🎉 Legacy celebrate (string) received.")
-			stopIdle()
-			ledcontrol.RunEffectByName("celebrate_legacy", 0x00FF00, 1)
-			startIdle()
+		// config push
+		if string(raw) == `{"type":"config_updated"}` || strings.Contains(string(raw), `"config_updated"`) {
+			log.Println("Config update notice → refetching prefs")
+			fetchPrefs(ident.DeviceID)
 			continue
 		}
 
+		// JSON event?
 		var msg WSMessage
-		if err := json.Unmarshal(raw, &msg); err != nil {
-			log.Printf("Ignoring non-JSON message: %q\n", string(raw))
+		if err := json.Unmarshal(raw, &msg); err == nil && (msg.Type != "" || msg.Effect != "") {
+			effect, color, cycles := resolvePrefs(msg)
+			log.Printf("Event=%s → effect=%s color=%06X cycles=%d", msg.Type, effect, color, cycles)
+			jobs <- effectJob{effect, color, cycles}
 			continue
 		}
-		msg.Type = strings.TrimSpace(strings.ToLower(msg.Type))
-		msg.Effect = strings.TrimSpace(strings.ToLower(msg.Effect))
 
-		effect, color, cycles := resolvePrefs(msg)
-		log.Printf("Event=%s → effect=%s color=%06X cycles=%d\n", msg.Type, effect, color, cycles)
-
-		stopIdle()
-		ledcontrol.RunEffectByName(effect, color, cycles)
-		startIdle()
+		// plain text event (e.g., "deal_won")
+		text := strings.ToLower(strings.TrimSpace(string(raw)))
+		if text != "" {
+			effect, color, cycles := resolvePrefs(WSMessage{Type: text})
+			log.Printf("Event=%s → effect=%s color=%06X cycles=%d", text, effect, color, cycles)
+			jobs <- effectJob{effect, color, cycles}
+		}
 	}
 }
 
-// ---------- utils ----------
-func parseHexColor(s string) uint32 {
-	s = strings.TrimSpace(strings.TrimPrefix(s, "#"))
-	if len(s) != 6 {
-		return 0
-	}
-	var r, g, b uint32
-	if _, err := fmt.Sscanf(s, "%02x%02x%02x", &r, &g, &b); err == nil {
-		return (r << 16) | (g << 8) | b
-	}
-	return 0
+// serialize effects; pause idle during effect, then resume
+func startEffectWorker() {
+	go func() {
+		for job := range jobs {
+			ledcontrol.StopBreathingEffect()
+			ledcontrol.RunEffectByName(job.effect, job.color, job.cycles)
+			// resume idle if configured as breath
+			if strings.ToLower(strings.TrimSpace(devicePrefs.Idle.Effect)) == "breath" ||
+				strings.ToLower(strings.TrimSpace(devicePrefs.Idle.Effect)) == "runbreathingeffect" {
+				ledcontrol.RunBreathingEffect()
+			}
+		}
+	}()
 }
 
+// ---------- main ----------
 func main() {
 	log.Println("Starting WebSocket Client...")
-	loadConfig()
-	startIdle() // start whatever idle is configured
+
+	// 1) fetch & apply prefs (sets config.json idle color; starts idle if breath)
+	id, err := loadIdent()
+	if err != nil {
+		log.Fatalf("identity error: %v", err)
+	}
+	fetchPrefs(id.DeviceID)
+
+	// 2) start effect worker
+	startEffectWorker()
+
+	// 3) connect WS (auth)
 	connectToWebSocket()
 }

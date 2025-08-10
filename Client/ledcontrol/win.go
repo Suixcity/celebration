@@ -6,6 +6,8 @@ import (
 	"log"
 	"math"
 	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,21 +21,26 @@ import (
 //
 
 const (
-	colorRed   = 0xFF0000
-	colorGreen = 0x00FF00
-	colorBlue  = 0x0000FF
-	colorOff   = 0x000000
+	colorRed   uint32 = 0xFF0000
+	colorGreen uint32 = 0x00FF00
+	colorBlue  uint32 = 0x0000FF
+	colorOff   uint32 = 0x000000
 )
 
+type idleCfg struct {
+	Color string `json:"color"` // "#RRGGBB" breathing color
+}
+
 type Config struct {
-	LedPin     int `json:"ledPin"`
-	LedCount   int `json:"ledCount"`
-	Brightness int `json:"brightness"`
+	LedPin     int     `json:"ledPin"`
+	LedCount   int     `json:"ledCount"`
+	Brightness int     `json:"brightness"` // 0..255 (driver scales)
+	Idle       idleCfg `json:"idle"`
 }
 
 var (
 	dev      *ws2811.WS2811
-	config   = Config{LedPin: 18, LedCount: 300, Brightness: 50}
+	config   = Config{LedPin: 18, LedCount: 300, Brightness: 255}
 	ledMutex sync.Mutex
 )
 
@@ -44,11 +51,11 @@ func LoadConfig() error {
 		return nil
 	}
 	defer f.Close()
+
 	var tmp Config
 	if err := json.NewDecoder(f).Decode(&tmp); err != nil {
 		return fmt.Errorf("failed to parse config: %v", err)
 	}
-	// only override if present
 	if tmp.LedPin != 0 {
 		config.LedPin = tmp.LedPin
 	}
@@ -58,6 +65,7 @@ func LoadConfig() error {
 	if tmp.Brightness != 0 {
 		config.Brightness = tmp.Brightness
 	}
+	config.Idle.Color = strings.TrimSpace(tmp.Idle.Color)
 	return nil
 }
 
@@ -120,20 +128,104 @@ func ClearLEDs() {
 	dev.Render()
 }
 
+// parseHexColor parses "#RRGGBB" or "RRGGBB" into 0xRRGGBB as uint32.
+func parseHexColor(s string) uint32 {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0
+	}
+	if s[0] == '#' {
+		s = s[1:]
+	}
+	if len(s) != 6 {
+		return 0
+	}
+	v, err := strconv.ParseUint(s, 16, 32)
+	if err != nil {
+		return 0
+	}
+	return uint32(v)
+}
+
 //
 // ==================
 //  Idle: Breathing
 // ==================
 //
 
-// Your existing breathing engine retained.
-// Start it when idle; stop it for event effects, then resume.
-
 var (
 	breathingStopChan chan struct{}
 	breathingWg       sync.WaitGroup
 )
 
+// ---- 1) Keep tiny channels from quantizing to 0 after global brightness ----
+// Scales 0xRRGGBB by gain [0..1], but guarantees each non‑zero channel
+// is at least floorLSB (pre‑brightness) when gain > 0.
+func scaleColorWithFloor(color uint32, gain float64, floorLSB uint32) uint32 {
+	if gain <= 0 {
+		return colorOff
+	}
+	if gain > 1 {
+		gain = 1
+	}
+	baseR := uint32((color >> 16) & 0xFF)
+	baseG := uint32((color >> 8) & 0xFF)
+	baseB := uint32(color & 0xFF)
+
+	scale := func(v uint32) uint32 {
+		if v == 0 {
+			return 0
+		}
+		s := uint32(float64(v) * gain)
+		// IMPORTANT: clamp anything below floorLSB up to floorLSB,
+		// not just when s == 0 — avoids (1 * brightness)>>8 → 0.
+		if s < floorLSB {
+			s = floorLSB
+		}
+		if s > 255 {
+			s = 255
+		}
+		return s
+	}
+
+	r := scale(baseR)
+	g := scale(baseG)
+	b := scale(baseB)
+	return (r << 16) | (g << 8) | b
+}
+
+// ---- 2) Compute a safe floor that survives the driver’s brightness scaling ----
+// For ws281x brightness (0..255) which effectively divides by ~256,
+// we want the smallest pre‑scaled value that won’t round to 0.
+func minLSBFromGlobal() uint32 {
+	b := config.Brightness
+	if b <= 0 {
+		// brightness off → force 1 so we still light at least 1 LSB
+		return 1
+	}
+	if b >= 255 {
+		// full brightness, 1 LSB will pass through
+		return 1
+	}
+	// ceil(256 / b) — slightly more conservative than 255/b
+	return uint32((256 + b - 1) / b)
+}
+
+func setAllLEDs(col uint32) {
+	ledMutex.Lock()
+	defer ledMutex.Unlock()
+	if dev == nil {
+		return
+	}
+	leds := dev.Leds(0)
+	max := min(config.LedCount, len(leds))
+	for i := 0; i < max; i++ {
+		leds[i] = col
+	}
+	dev.Render()
+}
+
+// ---- 3) Breathing loop with a nonzero base & the new floor applied ----
 func RunBreathingEffect() {
 	StopBreathingEffect()
 	if err := EnsureInit(); err != nil {
@@ -141,17 +233,31 @@ func RunBreathingEffect() {
 		return
 	}
 
+	// Use your idle color from config; fallback to blue.
+	baseColor := parseHexColor(config.Idle.Color)
+	if baseColor == 0 {
+		baseColor = colorBlue
+	}
+
+	// Pre‑compensated floor to survive global brightness scaling.
+	floor := minLSBFromGlobal()
+
 	breathingStopChan = make(chan struct{})
 	log.Println("RunBreathingEffect: starting")
 
 	breathingWg.Add(1)
 	go func() {
 		defer breathingWg.Done()
-		ticker := time.NewTicker(10 * time.Millisecond) // ~100 FPS
+
+		const frame = 10 * time.Millisecond // ~100 fps
+		ticker := time.NewTicker(frame)
 		defer ticker.Stop()
 
-		var t float64
-		baseColor := colorBlue // change default if desired
+		const secondsPerCycle = 12.0
+		// Nonzero base so it never *intends* to go dark. Bump a touch if you still see blacks.
+		const minDuty = 0.20
+		omega := 2 * math.Pi / secondsPerCycle
+		start := time.Now()
 
 		for {
 			select {
@@ -160,39 +266,15 @@ func RunBreathingEffect() {
 				ClearLEDs()
 				return
 
-			case <-ticker.C:
-				ledMutex.Lock()
-				if dev != nil {
-					leds := dev.Leds(0)
-					if len(leds) > 0 {
-						t += 0.00132 // ~30s wave @ 100fps
+			case now := <-ticker.C:
+				elapsed := now.Sub(start).Seconds()
+				// 0..1 sine wave; square for more time near low brightness
+				phase := (math.Sin(omega*elapsed) + 1.0) / 2.0
+				phase = phase * phase
+				brightness := minDuty + (1.0-minDuty)*phase
 
-						// 0..1 “breath” wave
-						phase := (math.Sin(t) + 1.0) / 2.0
-
-						// perceptual floor
-						min := 0.2
-						brightness := phase*(1.0-min) + min
-
-						baseR := float64((baseColor >> 16) & 0xFF)
-						baseG := float64((baseColor >> 8) & 0xFF)
-						baseB := float64(baseColor & 0xFF)
-
-						scale := func(v float64) uint32 { return uint32(v * brightness) }
-
-						rr := scale(baseR)
-						gg := scale(baseG)
-						bb := scale(baseB)
-
-						col := (rr << 16) | (gg << 8) | bb
-
-						for i := 0; i < config.LedCount && i < len(leds); i++ {
-							leds[i] = col
-						}
-						dev.Render()
-					}
-				}
-				ledMutex.Unlock()
+				col := scaleColorWithFloor(baseColor, brightness, floor)
+				setAllLEDs(col)
 			}
 		}
 	}()
@@ -236,7 +318,6 @@ func celebrateAnimation(done chan struct{}) {
 
 func BlinkLEDs() {
 	log.Println("🎉 Celebration Triggered!")
-	StopBreathingEffect()
 
 	if err := EnsureInit(); err != nil {
 		log.Printf("BlinkLEDs: init failed: %v", err)
@@ -245,11 +326,7 @@ func BlinkLEDs() {
 
 	done := make(chan struct{})
 	celebrateAnimation(done)
-
-	go func() {
-		<-done
-		RunBreathingEffect()
-	}()
+	<-done
 }
 
 //
@@ -260,7 +337,6 @@ func BlinkLEDs() {
 
 func ShootLEDs() {
 	log.Println("🚀 Shoot effect triggered")
-	StopBreathingEffect()
 
 	if err := EnsureInit(); err != nil {
 		log.Printf("ShootLEDs: init failed: %v", err)
@@ -270,15 +346,11 @@ func ShootLEDs() {
 	done := make(chan struct{})
 	go shootAnimation(colorBlue, 8, 20*time.Millisecond, done)
 
-	go func() {
-		<-done
-		RunBreathingEffect()
-	}()
+	<-done
 }
 
 func ShootBounceLEDs(headColor uint32, tail int, frameDelay time.Duration, bounces int) {
 	log.Println("🏓 Shoot bounce")
-	StopBreathingEffect()
 
 	if err := EnsureInit(); err != nil {
 		log.Printf("ShootBounceLEDs: init failed: %v", err)
@@ -341,10 +413,7 @@ func ShootBounceLEDs(headColor uint32, tail int, frameDelay time.Duration, bounc
 		close(done)
 	}()
 
-	go func() {
-		<-done
-		RunBreathingEffect()
-	}()
+	<-done
 }
 
 func shootAnimation(headColor uint32, tail int, frameDelay time.Duration, done chan struct{}) {
@@ -388,9 +457,9 @@ func shootAnimation(headColor uint32, tail int, frameDelay time.Duration, done c
 // ======================
 //
 
+// DealWonStackedShoot triggers the stacked comet+fill effect.
 func DealWonStackedShoot() {
 	log.Println("🏁 Deal Won → Stacked Shoot")
-	StopBreathingEffect()
 
 	if err := EnsureInit(); err != nil {
 		log.Printf("DealWonStackedShoot: init failed: %v", err)
@@ -399,19 +468,21 @@ func DealWonStackedShoot() {
 
 	done := make(chan struct{})
 	go shootStackedAnimation(
-		[]uint32{colorRed, colorBlue, colorGreen},
-		8,                   // tail
-		15*time.Millisecond, // speed
-		3,                   // blinks
+		[]uint32{colorRed, colorBlue, colorGreen}, // rotate through these
+		8,                   // tail length
+		15*time.Millisecond, // frame delay
+		3,                   // blinks to use
 		done,
 	)
 
-	go func() {
-		<-done
-		RunBreathingEffect()
-	}()
+	<-done
 }
 
+// shootStackedAnimation fills the strip from the END backwards using repeated
+// “comet” passes. It now:
+//   - fires a blink once when the comet head crosses the halfway point (n/2),
+//   - blinks using the *current shotColor* (not white),
+//   - ends with a blink in the final color (optional; easy to tweak/remove).
 func shootStackedAnimation(colors []uint32, tail int, frameDelay time.Duration, blinks int, done chan struct{}) {
 	if tail < 1 {
 		tail = 1
@@ -422,60 +493,106 @@ func shootStackedAnimation(colors []uint32, tail int, frameDelay time.Duration, 
 		return
 	}
 
-	// persistent fill region at END
+	// Filled (persist) lives at the END of the strip.
 	persist := make([]uint32, n)
-	filledStart := n // unfilled = [0..filledStart-1]
+	filledStart := n // unfilled window is [0..filledStart-1]
 	colorIdx := 0
 
-	for filledStart > 0 {
-		shotColor := colors[colorIdx%len(colors)]
-		colorIdx++
+	type shot struct {
+		head  int
+		color uint32
+	}
+	var shots []shot
 
-		// animate comet through unfilled region
-		for step := 0; step < filledStart+tail; step++ {
-			ledMutex.Lock()
-			if dev != nil {
-				leds := dev.Leds(0)
-				max := min(n, len(leds))
-				for i := 0; i < max; i++ {
-					leds[i] = persist[i]
-				}
+	// Clean slate so we don't “flash” at the beginning.
+	ClearLEDs()
+
+	// Seed first shot.
+	shots = append(shots, shot{head: 0, color: colors[colorIdx%len(colors)]})
+	colorIdx++
+
+	for filledStart > 0 {
+		// ----- draw frame -----
+		ledMutex.Lock()
+		if dev != nil {
+			leds := dev.Leds(0)
+			max := min(n, len(leds))
+
+			// Base = persist (already committed segments at the end)
+			for i := 0; i < max; i++ {
+				leds[i] = persist[i]
+			}
+
+			// Overlay all active shots into the current unfilled window
+			for _, s := range shots {
 				for t := 0; t < tail; t++ {
-					pos := step - t
+					pos := s.head - t
 					if pos < 0 || pos >= filledStart || pos >= max {
 						continue
 					}
 					f := 1.0 - float64(t)/float64(tail)
-					leds[pos] = fadeColor(shotColor, f)
+					leds[pos] = fadeColor(s.color, f)
 				}
-				dev.Render()
 			}
-			ledMutex.Unlock()
-			time.Sleep(frameDelay)
+			dev.Render()
+		}
+		ledMutex.Unlock()
+
+		time.Sleep(frameDelay)
+
+		// ----- advance shots -----
+		for i := range shots {
+			shots[i].head++
 		}
 
-		// commit chunk to end
-		chunk := min(tail, filledStart)
-		for i := 0; i < chunk; i++ {
-			persist[filledStart-1-i] = shotColor
+		// If the leading shot reached the boundary, commit a chunk of 'tail' to the end.
+		if len(shots) > 0 && shots[0].head >= filledStart {
+			chunk := min(tail, filledStart)
+			for i := 0; i < chunk; i++ {
+				persist[filledStart-1-i] = shots[0].color
+			}
+			filledStart -= chunk
+			shots = shots[1:] // remove the one we just committed
 		}
-		filledStart -= chunk
+
+		// Spawn the next shot when the LAST active shot is halfway through the current unfilled window.
+		if filledStart > 0 {
+			half := filledStart / 2
+			if len(shots) == 0 || shots[len(shots)-1].head >= half {
+				shots = append(shots, shot{head: 0, color: colors[colorIdx%len(colors)]})
+				colorIdx++
+			}
+		}
 	}
 
-	// show full
-	ledMutex.Lock()
-	if dev != nil {
-		leds := dev.Leds(0)
-		max := min(n, len(leds))
-		for i := 0; i < max; i++ {
-			leds[i] = persist[i]
+	// Final: blink using the ACTUAL segment colors (not white)
+	for b := 0; b < blinks; b++ {
+		// ON (segment colors)
+		ledMutex.Lock()
+		if dev != nil {
+			leds := dev.Leds(0)
+			max := min(n, len(leds))
+			for i := 0; i < max; i++ {
+				leds[i] = persist[i]
+			}
+			dev.Render()
 		}
-		dev.Render()
-	}
-	ledMutex.Unlock()
+		ledMutex.Unlock()
+		time.Sleep(220 * time.Millisecond)
 
-	// blink
-	blinkStrip(blinks, 0xFFFFFF, 220*time.Millisecond)
+		// OFF
+		ledMutex.Lock()
+		if dev != nil {
+			leds := dev.Leds(0)
+			max := min(n, len(leds))
+			for i := 0; i < max; i++ {
+				leds[i] = colorOff
+			}
+			dev.Render()
+		}
+		ledMutex.Unlock()
+		time.Sleep(220 * time.Millisecond)
+	}
 
 	ClearLEDs()
 	close(done)
@@ -507,6 +624,7 @@ func min(a, b int) int {
 	return b
 }
 
+// blinkStrip blinks the whole strip with a color for a period, 'times' times.
 func blinkStrip(times int, onColor uint32, period time.Duration) {
 	for i := 0; i < times; i++ {
 		ledMutex.Lock()
@@ -596,8 +714,6 @@ func rainbowCycle(delay time.Duration) {
 // =============================
 //
 
-// RunEffect: simple built-ins with color/cycles,
-// fully lifecycle-managed (init/cleanup) so they’re safe.
 func RunEffect(effect string, color uint32, cycles int) {
 	StopBreathingEffect()
 	if err := EnsureInit(); err != nil {
@@ -605,10 +721,8 @@ func RunEffect(effect string, color uint32, cycles int) {
 		return
 	}
 	defer func() {
-		// leave device up if you immediately resume idle; otherwise cleanup
 		ClearLEDs()
 		CleanupLEDs()
-		RunBreathingEffect()
 	}()
 
 	switch effect {
@@ -654,11 +768,8 @@ func RunEffect(effect string, color uint32, cycles int) {
 	}
 }
 
-// RunEffectByName: call your named effects or fall back to generic ones.
-// This is what your Client.go calls when it looks up preferences.
 func RunEffectByName(effect string, color uint32, cycles int) {
 	switch effect {
-	// --- Your legacy/named effects (self-managed) ---
 	case "celebrate_legacy":
 		BlinkLEDs()
 		return
@@ -672,13 +783,11 @@ func RunEffectByName(effect string, color uint32, cycles int) {
 		DealWonStackedShoot()
 		return
 
-	// --- Generic managed effects ---
 	case "blink", "wipe", "rainbow":
 		RunEffect(effect, color, cycles)
 		return
 
 	default:
-		// unknown name → something festive
 		BlinkLEDs()
 	}
 }
