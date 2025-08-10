@@ -138,6 +138,10 @@ func secureCompare(a, b string) bool {
 }
 
 func init() {
+	if k := strings.TrimSpace(os.Getenv("ADMIN_API_KEY")); k != "" {
+		adminKey = k
+		return
+	}
 	data, err := os.ReadFile("/etc/secrets/admin_key.txt")
 	if err != nil {
 		log.Fatalf("failed to read admin key: %v", err)
