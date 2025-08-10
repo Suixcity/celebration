@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -66,23 +65,18 @@ func main() {
 	r := chi.NewRouter()
 	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(200); _, _ = w.Write([]byte("ok")) })
 
-	r.Post("/register", handleRegister)
+	r.Post("/register", handleRegister) // up to you if this should be admin-only
 
 	r.Route("/devices/{id}", func(r chi.Router) {
-		r.Get("/prefs", handleGetPrefs)
-		r.Put("/prefs", handlePutPrefs)
-		r.Post("/notify-config", handleNotifyConfig) // push “config_updated”
-		// protected writes
-		r.With(requireAdminMW).Put("/prefs", handlePutPrefs)
-		r.With(requireAdminMW).Post("/notify-config", handleNotifyConfig)
+		r.Get("/prefs", handleGetPrefs)                 // could be open
+		r.With(adminOnly).Put("/prefs", handlePutPrefs) // protect writes
+		r.With(adminOnly).Post("/notify-config", handleNotifyConfig)
 	})
 
-	r.Get("/ws", handleWS)
-	r.Post("/test/broadcast", handleTestBroadcast) // dev/test helper
+	// Dev/test endpoint - strongly recommend protecting
+	r.With(adminOnly).Post("/test/broadcast", handleTestBroadcast)
 
-	addr := ":" + env("PORT", "8080")
-	fmt.Println("Server listening on", addr, "(data at", dataDir, ")")
-	panic(http.ListenAndServe(addr, r))
+	r.Get("/ws", handleWS)
 }
 
 func env(k, def string) string {
@@ -384,6 +378,32 @@ func handleNotifyConfig(w http.ResponseWriter, r *http.Request) {
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+// secureCompare is timing-safe.
+func secureCompare(a, b string) bool {
+	aa := []byte(a)
+	bb := []byte(b)
+	if len(aa) != len(bb) {
+		return false
+	}
+	return hmac.Equal(aa, bb)
+}
+
+func adminOnly(next http.Handler) http.Handler {
+	required := os.Getenv("ADMIN_API_KEY")
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if required == "" {
+			http.Error(w, "admin key not configured", http.StatusForbidden)
+			return
+		}
+		got := r.Header.Get("X-Admin-Key")
+		if !secureCompare(got, required) {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // middleware
