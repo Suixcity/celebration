@@ -341,7 +341,6 @@ func handleWS(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "timestamp skew", http.StatusUnauthorized)
 		return
 	}
-
 	want := makeSig(devID, sec, ts)
 	if !hmac.Equal([]byte(strings.ToLower(sig)), []byte(want)) {
 		http.Error(w, "bad signature", http.StatusUnauthorized)
@@ -355,15 +354,43 @@ func handleWS(w http.ResponseWriter, r *http.Request) {
 	addConn(devID, conn)
 	defer removeConn(devID, conn)
 
-	conn.SetReadLimit(1 << 20)
-	_ = conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+	// ---- Keepalive: deadlines + ping/pong handlers
+	const ka = 90 * time.Second
+	_ = conn.SetReadDeadline(time.Now().Add(ka))
+
 	conn.SetPongHandler(func(string) error {
-		return conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+		// Got a Pong (likely in response to our Ping) → extend deadline
+		return conn.SetReadDeadline(time.Now().Add(ka))
+	})
+	conn.SetPingHandler(func(appData string) error {
+		// Client pinged us → extend deadline and reply Pong
+		if err := conn.SetReadDeadline(time.Now().Add(ka)); err != nil {
+			return err
+		}
+		deadline := time.Now().Add(5 * time.Second)
+		return conn.WriteControl(websocket.PongMessage, []byte(appData), deadline)
 	})
 
-	// Keep reading to detect disconnects.
+	// Periodically ping the client so we get Pongs and keep the proxy happy
+	done := make(chan struct{})
+	go func() {
+		t := time.NewTicker(25 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-t.C:
+				deadline := time.Now().Add(5 * time.Second)
+				_ = conn.WriteControl(websocket.PingMessage, []byte("ping"), deadline)
+			case <-done:
+				return
+			}
+		}
+	}()
+
+	// Read loop (must keep reading so control frames are processed)
 	for {
 		if _, _, err := conn.ReadMessage(); err != nil {
+			close(done)
 			return
 		}
 	}
