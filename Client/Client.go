@@ -22,7 +22,7 @@ import (
 var (
 	// Change these to wherever Server.go is running
 	apiBase = "https://webhook-listener-2i7r.onrender.com"
-	wsURL   = "https://webhook-listener-2i7r.onrender.com/ws"
+	wsURL   = "wss://webhook-listener-2i7r.onrender.com/ws"
 )
 
 // ---------- types ----------
