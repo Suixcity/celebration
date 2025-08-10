@@ -498,10 +498,6 @@ func shootStackedAnimation(colors []uint32, tail int, frameDelay time.Duration, 
 	filledStart := n // unfilled = [0..filledStart-1]
 	colorIdx := 0
 
-	// fire only once at the exact halfway crossing
-	halfFired := false
-	halfIndex := n / 2
-
 	for filledStart > 0 {
 		shotColor := colors[colorIdx%len(colors)]
 		colorIdx++
@@ -512,63 +508,24 @@ func shootStackedAnimation(colors []uint32, tail int, frameDelay time.Duration, 
 			if dev != nil {
 				leds := dev.Leds(0)
 				max := min(n, len(leds))
-
-				// draw background (what's already "stuck" on the right)
 				for i := 0; i < max; i++ {
 					leds[i] = persist[i]
 				}
-
-				// draw head + tail within the unfilled left region
-				// head position "pos" runs from 0 up to filledStart-1
-				headPos := -1
 				for t := 0; t < tail; t++ {
 					pos := step - t
 					if pos < 0 || pos >= filledStart || pos >= max {
 						continue
 					}
-					if headPos == -1 {
-						headPos = pos // first valid t => head
-					}
 					f := 1.0 - float64(t)/float64(tail)
 					leds[pos] = fadeColor(shotColor, f)
 				}
-
-				// trigger the halfway blink exactly once when the HEAD crosses n/2
-				if !halfFired && headPos >= 0 && headPos == halfIndex {
-					dev.Render()
-					ledMutex.Unlock()
-
-					blinkStrip(blinks, shotColor, 220*time.Millisecond)
-
-					ledMutex.Lock()
-					// redraw current frame after blink (so animation continues smoothly)
-					if dev != nil {
-						leds = dev.Leds(0)
-						max = min(n, len(leds))
-						for i := 0; i < max; i++ {
-							leds[i] = persist[i]
-						}
-						for t := 0; t < tail; t++ {
-							pos := step - t
-							if pos < 0 || pos >= filledStart || pos >= max {
-								continue
-							}
-							f := 1.0 - float64(t)/float64(tail)
-							leds[pos] = fadeColor(shotColor, f)
-						}
-					}
-					halfFired = true
-				}
-
-				if dev != nil {
-					dev.Render()
-				}
+				dev.Render()
 			}
 			ledMutex.Unlock()
 			time.Sleep(frameDelay)
 		}
 
-		// commit a “chunk” of the comet’s tail onto the right end
+		// commit chunk to end
 		chunk := min(tail, filledStart)
 		for i := 0; i < chunk; i++ {
 			persist[filledStart-1-i] = shotColor
@@ -576,7 +533,7 @@ func shootStackedAnimation(colors []uint32, tail int, frameDelay time.Duration, 
 		filledStart -= chunk
 	}
 
-	// show final filled strip
+	// show full
 	ledMutex.Lock()
 	if dev != nil {
 		leds := dev.Leds(0)
@@ -588,10 +545,8 @@ func shootStackedAnimation(colors []uint32, tail int, frameDelay time.Duration, 
 	}
 	ledMutex.Unlock()
 
-	// Optional: blink at the end using the final segment's color (not white).
-	// If you don’t want this blink, just delete these two lines.
-	finalColor := persist[n-1]
-	blinkStrip(blinks, finalColor, 220*time.Millisecond)
+	// blink
+	blinkStrip(blinks, 0xFFFFFF, 220*time.Millisecond)
 
 	ClearLEDs()
 	close(done)
