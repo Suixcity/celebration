@@ -21,8 +21,8 @@ import (
 
 var (
 	// Change these to wherever Server.go is running
-	apiBase = "http://localhost:8080"
-	wsURL   = "ws://localhost:8080/ws"
+	apiBase = "https://webhook-listener-2i7r.onrender.com"
+	wsURL   = "https://webhook-listener-2i7r.onrender.com/ws"
 )
 
 // ---------- types ----------
